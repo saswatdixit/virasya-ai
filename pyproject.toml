@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "virasya_ai"
+version = "0.2.0"
+description = "VIRASYA AI: Hindi-first oral-history review workbench"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "virasya_ai" }]
+dependencies = [
+  "numpy>=1.24",
+  "soundfile>=0.12",
+  "soxr>=0.3",
+  "python-dotenv",
+  "flask",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+punctuation = [
+  "transformers",
+]
+punctuation-model = [
+  "transformers",
+  "torch",
+]
+all = [
+  "pytest>=8.0",
+  "transformers",
+  "torch",
+]
+
+[project.scripts]
+virasya = "virasya_ai.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "phases/00_transcription/tests", "phases/01_review/tests", "phases/02_vocabulary/tests", "phases/03_punctuation/tests"]
+pythonpath = ["src"]
+markers = [
+  "integration: tests that require external model or provider services",
+]
+addopts = "-q"

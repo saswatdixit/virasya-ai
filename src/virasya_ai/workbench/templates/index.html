@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Virasya Workbench</title>
+    <style>
+        :root {
+            --bg: #151513;
+            --surface: #1F1E1B;
+            --surface-alt: #272521;
+            --text: #F2EFE8;
+            --muted: #AAA59A;
+            --border: #3A3731;
+            --accent: #C4774F;
+            --accent-dark: #9A5B3A;
+            --input: #191815;
+        }
+
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg); color: var(--text); display: flex; height: 100vh; }
+
+        .sidebar { width: 250px; background: var(--surface); border-right: 1px solid var(--border); padding: 2rem 1.5rem; display: flex; flex-direction: column; gap: 2rem; box-shadow: 2px 0 8px rgba(0,0,0,0.5); z-index: 10; }
+        .sidebar-title { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.5rem 0; color: var(--text); }
+        .sidebar-subtitle { font-size: 0.85rem; color: var(--muted); margin: 0; }
+        .nav-section { display: flex; flex-direction: column; gap: 0.75rem; }
+        .nav-header { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.5rem; font-weight: 600; }
+        .nav-item { font-size: 0.95rem; color: var(--muted); display: flex; align-items: center; gap: 0.5rem; transition: color 0.2s; }
+        .nav-item.active { color: var(--accent); font-weight: 600; background-color: var(--surface-alt); padding: 0.4rem 0.5rem; border-radius: 4px; margin-left: -0.5rem; margin-right: -0.5rem; }
+        .nav-item.active::before { content: "●"; color: var(--accent); font-size: 0.75rem; }
+
+        .workspace { flex: 1; padding: 0 4rem 4rem 4rem; overflow-y: auto; }
+        .screen { display: none; max-width: 900px; margin: 0 auto; }
+        .screen.active { display: block; }
+        h1 { font-size: 1.75rem; font-weight: 500; margin-bottom: 0.5rem; color: var(--text); }
+        h2 { font-size: 1.2rem; font-weight: 500; margin-bottom: 1rem; color: var(--text); }
+        .subtitle { color: var(--muted); margin-bottom: 2rem; font-size: 1rem; }
+
+        .top-nav { display: flex; justify-content: space-between; align-items: center; padding: 1.5rem 0; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
+        .btn-text { background: none; border: none; color: var(--muted); font-size: 0.9rem; cursor: pointer; padding: 0.5rem 0; display: inline-flex; align-items: center; gap: 0.25rem; }
+        .btn-text:hover { color: var(--text); }
+
+        .card { background: var(--surface); border: 1px solid var(--border); padding: 2rem; border-radius: 6px; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+        
+        .drop-area { border: 2px dashed var(--border); border-radius: 6px; padding: 3rem; text-align: center; background: var(--surface); cursor: pointer; transition: border-color 0.2s, background-color 0.2s; margin-bottom: 1.5rem; }
+        .drop-area:hover { border-color: var(--accent); }
+        .drop-area.dragover { background-color: var(--surface-alt); border-color: var(--accent); }
+
+        .select-input { width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; font-size: 1rem; margin-bottom: 1.5rem; color: var(--text); background: var(--input); }
+        
+        button.btn-standard { background: var(--surface-alt); color: var(--text); border: 1px solid var(--border); padding: 0.6rem 1.2rem; font-size: 0.95rem; cursor: pointer; border-radius: 4px; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; font-weight: 500; }
+        button.btn-standard:hover:not(:disabled) { border-color: var(--accent); background: var(--border); }
+        button.primary { background: var(--accent); color: #fff; border: 1px solid var(--accent-dark); }
+        button.primary:hover:not(:disabled) { background: var(--accent-dark); border-color: var(--accent-dark); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .file-info { background: var(--surface); border: 1px solid var(--border); padding: 1rem 1.5rem; border-radius: 6px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+
+        .transcript-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+        @media (max-width: 1000px) { .transcript-grid { grid-template-columns: 1fr; } }
+        .transcript-box { background: var(--surface); border: 1px solid var(--border); padding: 1.5rem; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+        .transcript-header { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+        .transcript-text { font-size: 1.15rem; line-height: 1.7; font-family: "Noto Sans Devanagari", "Mangal", sans-serif; min-height: 150px; color: var(--text); }
+        
+        textarea.editor { width: 100%; min-height: 200px; padding: 1.5rem; font-size: 1.2rem; line-height: 1.7; font-family: "Noto Sans Devanagari", "Mangal", sans-serif; border: 1px solid var(--border); border-radius: 6px; resize: vertical; margin-bottom: 1.5rem; color: var(--text); background: var(--input); box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); }
+        textarea.editor:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+        .vocab-item { display: flex; align-items: center; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--border); }
+        .form-group { margin-bottom: 1.2rem; }
+        .form-group label { display: block; margin-bottom: 0.4rem; font-size: 0.9rem; color: var(--muted); font-weight: 500; }
+        .form-control { width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 0.95rem; background: var(--input); color: var(--text); }
+        .form-control:focus { outline: none; border-color: var(--accent); }
+
+        .spinner { display: inline-block; width: 1em; height: 1em; border: 2px solid rgba(255,255,255,0.1); border-radius: 50%; border-top-color: currentColor; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .error-message { color: #ff8a80; background: #3e1b1b; border: 1px solid #7a2222; padding: 1rem; border-radius: 4px; margin-bottom: 1.5rem; display: none; font-size: 0.95rem; }
+        
+        .hint-text { font-size: 0.85rem; color: var(--muted); font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="sidebar">
+    <div><h1 class="sidebar-title">VIRASYA</h1><p class="sidebar-subtitle">Workbench</p></div>
+    <div class="nav-section">
+        <div class="nav-header">Workflow</div>
+        <div class="nav-item" id="nav-step-1">Audio Selection</div>
+        <div class="nav-item" id="nav-step-2">Raw Outputs</div>
+        <div class="nav-item" id="nav-step-3">Manual Review</div>
+        <div class="nav-item" id="nav-step-4">Vocabulary</div>
+        <div class="nav-item" id="nav-step-5">Punctuation</div>
+    </div>
+</div>
+
+<div class="workspace">
+    <!-- Screen 1: Start -->
+    <div id="screen-1" class="screen active">
+        <div class="top-nav" style="border:none; margin-bottom:0;"></div>
+        <h1>Audio Selection</h1>
+        <p class="subtitle">Select or drop an audio file to begin.</p>
+        <div class="error-message" id="error-1"></div>
+        <div class="drop-area" id="drop-area">
+            <p style="margin-top:0; font-size:1.1rem; color:var(--text);">Drop audio file here</p>
+            <p style="color: var(--muted); font-size: 0.9rem; margin: 1rem 0;">or</p>
+            <button type="button" class="btn-standard" id="btn-choose-file">Choose File</button>
+            <input type="file" id="file-input" style="display: none;" accept=".wav,.ogg,.mp3,.flac">
+        </div>
+        <select id="file-select" class="select-input"><option value="">Select an existing file...</option></select>
+        <div id="selected-file-info" class="file-info" style="display: none;">
+            <div><strong id="file-name" style="display:block; font-size:1.1rem; margin-bottom:0.25rem;"></strong><span style="font-size: 0.85rem; color: var(--muted);" id="file-meta"></span></div>
+            <button class="btn-standard" id="btn-remove-file">Change</button>
+        </div>
+        <div style="margin-top: 2rem;">
+            <button id="btn-transcribe" class="btn-standard primary" style="display: none; padding: 0.75rem 2rem; font-size: 1.05rem;">Run Raw Transcription</button>
+        </div>
+    </div>
+
+    <!-- Screen 2: Raw Outputs -->
+    <div id="screen-2" class="screen">
+        <div class="top-nav"><button class="btn-text" onclick="navTo(1)">&larr; Back</button><button class="btn-text" onclick="startNewAudio()">New Audio</button></div>
+        <h1>Raw Transcription</h1>
+        <p class="subtitle">The Hindi transcript returned by the configured Gnani.ai service will appear here.</p>
+        <div class="error-message" id="error-2"></div>
+        <div class="transcript-grid">
+            <div class="transcript-box"><div class="transcript-header">Gnani.ai transcript</div><div class="transcript-text" id="raw-transcript"></div></div>
+        </div>
+        <button id="btn-start-review" class="btn-standard primary">Start Manual Review</button>
+    </div>
+
+    <!-- Screen 3: Manual Review -->
+    <div id="screen-3" class="screen">
+        <div class="top-nav"><button class="btn-text" onclick="navTo(2)">&larr; Back</button><button class="btn-text" onclick="startNewAudio()">New Audio</button></div>
+        <h1>Manual Review</h1>
+        <p class="subtitle">Review the raw outputs and construct the final transcript.</p>
+        <div class="error-message" id="error-3"></div>
+        <div class="transcript-grid">
+            <div class="transcript-box"><div class="transcript-header">Gnani.ai draft <button type="button" class="btn-standard" onclick="useText()" style="padding:0.2rem 0.5rem; font-size:0.8rem;">Use Text</button></div><div class="transcript-text" id="review-transcript"></div></div>
+        </div>
+        <h2>Final Text</h2>
+        <textarea id="editor-final" class="editor" placeholder="Type the final reviewed transcript here..."></textarea>
+        <button id="btn-submit-review" class="btn-standard primary">Submit Review</button>
+    </div>
+
+    <!-- Screen 4: Vocabulary -->
+    <div id="screen-4" class="screen">
+        <div class="top-nav"><button class="btn-text" onclick="navTo(3)">&larr; Back</button><button class="btn-text" onclick="startNewAudio()">New Audio</button></div>
+        <h1>Vocabulary</h1>
+        <p class="subtitle">Preserve cultural provenance by adding unknown words to the vocabulary.</p>
+        <div class="error-message" id="error-4"></div>
+        
+        <h2>Reviewed Text</h2>
+        <div class="card" style="background:var(--surface-alt); padding: 1.5rem;">
+            <div class="transcript-text" id="vocab-reviewed-text"></div>
+        </div>
+
+        <h2>Recommended words</h2>
+        <div class="card" id="vocab-recommendations" style="padding: 1rem;"><p style="color: var(--muted); margin:1rem;">No recommendations found.</p></div>
+        
+        <h2>Add a word manually</h2>
+        <div class="card">
+            <div class="form-group"><label>Word</label><input type="text" id="vocab-word" class="form-control"></div>
+            <div class="form-group"><label>Meaning</label><input type="text" id="vocab-meaning" class="form-control"></div>
+            <div class="form-group"><label>Context</label><textarea id="vocab-context" class="form-control" rows="2"></textarea></div>
+            <button class="btn-standard" id="btn-add-vocab">Add Word</button>
+            <div id="manual-words-list" style="margin-top: 1.5rem; font-size: 0.95rem; color:var(--accent);"></div>
+        </div>
+        
+        <div style="text-align: right;"><button id="btn-goto-punctuate" class="btn-standard primary">Add Punctuations</button></div>
+    </div>
+
+    <!-- Screen 5: Punctuation -->
+    <div id="screen-5" class="screen">
+        <div class="top-nav"><button class="btn-text" onclick="navTo(4)">&larr; Back</button><button class="btn-text" onclick="startNewAudio()">New Audio</button></div>
+        <h1>Punctuation</h1>
+        <p class="subtitle">Restore sentence boundaries and readable Hindi punctuation.</p>
+        <div class="error-message" id="error-5"></div>
+        
+        <h2 style="font-size:1rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Final reviewed text</h2>
+        <div class="card" style="background:var(--surface-alt); margin-bottom: 2rem;">
+            <div class="transcript-text" id="punctuate-input"></div>
+        </div>
+        
+        <button id="btn-run-punctuate" class="btn-standard primary" style="margin-bottom: 2rem;">Add Punctuation</button>
+        
+        <div id="punctuate-result-container" style="display: none;">
+            <h2 style="font-size:1rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Final Punctuated Text</h2>
+            <p class="hint-text" style="margin-top: -0.5rem; margin-bottom: 1rem;">User can edit this directly.</p>
+            <textarea id="editor-punctuate" class="editor" placeholder="Final punctuated text..."></textarea>
+            
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <button id="btn-save-final" class="btn-standard primary">Save Final Text</button>
+                <button id="btn-revert-punctuate" class="btn-standard">Revert to Model Output</button>
+                <span id="save-final-status" class="hint-text" style="color:var(--accent);"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let state = {
+        filename: null,
+        task_path: null,
+        transcript: "",
+        finalText: "",
+        manualWords: [],
+        suggestions: [],
+        punctuatedModelText: "",
+        punctuatedFinalText: ""
+    };
+
+    function navTo(step) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        document.getElementById(`screen-${step}`).classList.add('active');
+        document.getElementById(`nav-step-${step}`).classList.add('active');
+    }
+    
+    function startNewAudio() {
+        if(confirm("Abandon current workflow and select a new audio file?")) {
+            state = {
+                filename: null,
+                task_path: null,
+                transcript: "",
+                finalText: "",
+                manualWords: [],
+                suggestions: [],
+                punctuatedModelText: "",
+                punctuatedFinalText: ""
+            };
+            document.getElementById('editor-final').value = "";
+            document.getElementById('manual-words-list').innerHTML = "";
+            document.getElementById('vocab-word').value = "";
+            document.getElementById('vocab-meaning').value = "";
+            document.getElementById('vocab-context').value = "";
+            document.getElementById('editor-punctuate').value = "";
+            document.getElementById('save-final-status').textContent = "";
+            
+            document.getElementById('punctuate-result-container').style.display = "none";
+            document.getElementById('btn-run-punctuate').style.display = "inline-flex";
+            
+            document.getElementById('selected-file-info').style.display = 'none';
+            document.getElementById('btn-transcribe').style.display = 'none';
+            document.getElementById('file-select').value = "";
+            
+            navTo(1);
+        }
+    }
+
+    function showError(step, msg) { document.getElementById(`error-${step}`).textContent = msg; document.getElementById(`error-${step}`).style.display = 'block'; }
+    function hideError(step) { document.getElementById(`error-${step}`).style.display = 'none'; }
+
+    function loadFiles() {
+        fetch('/api/audio-files').then(res => res.json()).then(files => {
+            const select = document.getElementById('file-select');
+            select.innerHTML = '<option value="">Select an existing file...</option>';
+            files.forEach(f => {
+                const opt = document.createElement('option'); opt.value = f.name; opt.textContent = f.name; select.appendChild(opt);
+            });
+        }).catch(() => {});
+    }
+    loadFiles();
+
+    document.getElementById('file-select').addEventListener('change', (e) => { if(e.target.value) selectFile(e.target.value); });
+    document.getElementById('btn-remove-file').addEventListener('click', () => { state.filename = null; document.getElementById('selected-file-info').style.display = 'none'; document.getElementById('btn-transcribe').style.display = 'none'; document.getElementById('file-select').value = ""; });
+    function selectFile(filename) { state.filename = filename; document.getElementById('file-name').textContent = filename; document.getElementById('file-meta').textContent = "Selected from existing files"; document.getElementById('selected-file-info').style.display = 'flex'; document.getElementById('btn-transcribe').style.display = 'inline-flex'; }
+
+    const dropArea = document.getElementById('drop-area');
+    const fileInput = document.getElementById('file-input');
+    document.getElementById('btn-choose-file').addEventListener('click', () => fileInput.click());
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(e => dropArea.addEventListener(e, preventDefaults, false));
+    function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+    ['dragenter', 'dragover'].forEach(e => dropArea.addEventListener(e, () => dropArea.classList.add('dragover'), false));
+    ['dragleave', 'drop'].forEach(e => dropArea.addEventListener(e, () => dropArea.classList.remove('dragover'), false));
+    dropArea.addEventListener('drop', e => { if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); }, false);
+    fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFiles(e.target.files); });
+
+    async function handleFiles(files) {
+        hideError(1);
+        const formData = new FormData(); formData.append('file', files[0]);
+        try {
+            const res = await fetch('/api/upload', { method: 'POST', body: formData });
+            const data = await res.json();
+            if(!res.ok) throw new Error(data.error || "Upload failed");
+            state.filename = data.filename;
+            document.getElementById('file-name').textContent = data.filename; document.getElementById('file-meta').textContent = `Uploaded file`;
+            document.getElementById('selected-file-info').style.display = 'flex'; document.getElementById('btn-transcribe').style.display = 'inline-flex';
+            loadFiles();
+        } catch(err) { showError(1, err.message); }
+    }
+
+    document.getElementById('btn-transcribe').addEventListener('click', async (e) => {
+        const btn = e.target; btn.disabled = true; btn.innerHTML = '<span class="spinner" style="margin-right:0.5rem;"></span> Transcribing audio...'; hideError(1);
+        try {
+            const res = await fetch('/api/transcribe', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ filename: state.filename }) });
+            let data; try { data = await res.json(); } catch(e) { throw new Error("Invalid response from server. Check console."); }
+            if(!res.ok) throw new Error(data.error || "Transcription failed");
+            state.task_path = data.task_path; state.transcript = data.transcript?.text || data.task?.transcript?.text || ""; state.suggestions = data.task?.analysis?.vocabulary_suggestions || [];
+            document.getElementById('raw-transcript').textContent = state.transcript;
+            document.getElementById('editor-final').value = "";
+            document.getElementById('review-transcript').textContent = state.transcript;
+            navTo(2);
+        } catch (err) { showError(1, err.message); } finally { btn.disabled = false; btn.innerHTML = 'Run Raw Transcription'; }
+    });
+
+    document.getElementById('btn-start-review').addEventListener('click', () => navTo(3));
+    function useText() { document.getElementById('editor-final').value = state.transcript; }
+
+    document.getElementById('btn-submit-review').addEventListener('click', async (e) => {
+        const text = document.getElementById('editor-final').value.trim();
+        if(!text) { showError(3, "Final text cannot be empty."); return; }
+        hideError(3);
+        const btn = e.target; btn.disabled = true; btn.innerHTML = '<span class="spinner" style="margin-right:0.5rem;"></span> Submitting...';
+        try {
+            const res = await fetch('/api/review', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ task_path: state.task_path, verified_text: text }) });
+            let data; try { data = await res.json(); } catch(e) { throw new Error("Invalid response from server. API may not be implemented."); }
+            if(!res.ok) throw new Error(data.error || "Review submission failed.");
+            
+            state.finalText = text;
+            // Update Vocabulary screen's Reviewed Text context
+            document.getElementById('vocab-reviewed-text').textContent = state.finalText;
+            
+            const recContainer = document.getElementById('vocab-recommendations');
+            if(state.suggestions && state.suggestions.length > 0) {
+                recContainer.innerHTML = state.suggestions.map((s, i) => `
+                    <div class="vocab-item">
+                        <input type="checkbox" id="rec-${i}" value="${s.matched_text}">
+                        <label for="rec-${i}" style="flex:1; margin:0; cursor:pointer; color:var(--text);">${s.matched_text}</label>
+                        <span style="color:var(--muted); font-size:0.85rem; text-transform:uppercase; letter-spacing:0.05em;">Accept</span>
+                    </div>
+                `).join('');
+            } else { recContainer.innerHTML = '<p style="color: var(--muted); margin:1rem;">No recommendations found.</p>'; }
+            navTo(4);
+        } catch (err) { showError(3, err.message); } finally { btn.disabled = false; btn.innerHTML = 'Submit Review'; }
+    });
+
+    document.getElementById('btn-add-vocab').addEventListener('click', () => {
+        const word = document.getElementById('vocab-word').value.trim(); const meaning = document.getElementById('vocab-meaning').value.trim(); const context = document.getElementById('vocab-context').value.trim();
+        if(word) {
+            state.manualWords.push({word, meaning, context});
+            document.getElementById('manual-words-list').innerHTML += `<div style="padding:0.5rem 0; border-bottom:1px solid var(--border);">+ ${word} ${meaning ? `<span style="color:var(--muted); font-size:0.85rem;">(${meaning})</span>` : ''}</div>`;
+            document.getElementById('vocab-word').value = ''; document.getElementById('vocab-meaning').value = ''; document.getElementById('vocab-context').value = '';
+        }
+    });
+
+    document.getElementById('btn-goto-punctuate').addEventListener('click', async (e) => {
+        const btn = e.target; btn.disabled = true; btn.innerHTML = '<span class="spinner" style="margin-right:0.5rem;"></span> Saving vocabulary...'; hideError(4);
+        try {
+            const selectedRecs = Array.from(document.querySelectorAll('#vocab-recommendations input:checked')).map(cb => ({ word: cb.value, meaning: '', context: state.finalText }));
+            const allWords = [...selectedRecs, ...state.manualWords];
+            if (allWords.length > 0) {
+                const res = await fetch('/api/vocabulary', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ task_path: state.task_path, words: allWords }) });
+                let data; try { data = await res.json(); } catch(e) { throw new Error("Invalid response from server."); }
+                if(!res.ok) throw new Error(data.error || "Failed to save vocabulary");
+            }
+            
+            document.getElementById('punctuate-input').textContent = state.finalText;
+            navTo(5);
+            
+            const punctuateBtn = document.getElementById('btn-run-punctuate');
+            punctuateBtn.style.display = 'inline-flex';
+            punctuateBtn.disabled = false;
+            punctuateBtn.innerHTML = 'Add Punctuation';
+            document.getElementById('punctuate-result-container').style.display = 'none';
+            punctuateBtn.click();
+        } catch (err) { showError(4, err.message); } finally { btn.disabled = false; btn.innerHTML = 'Add Punctuations'; }
+    });
+
+    document.getElementById('btn-run-punctuate').addEventListener('click', async (e) => {
+        const btn = e.target; btn.disabled = true; btn.innerHTML = '<span class="spinner" style="margin-right:0.5rem;"></span> Adding punctuation...'; hideError(5);
+        document.getElementById('save-final-status').textContent = "";
+        try {
+            const res = await fetch('/api/punctuate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ task_path: state.task_path }) });
+            let data; try { data = await res.json(); } catch(e) { throw new Error("Invalid response from server."); }
+            if(!res.ok) throw new Error(data.error || "Punctuation failed.");
+            
+            state.punctuatedModelText = data.punctuated_text;
+            state.punctuatedFinalText = data.punctuated_text;
+            
+            document.getElementById('editor-punctuate').value = state.punctuatedFinalText;
+            document.getElementById('punctuate-result-container').style.display = 'block';
+            btn.style.display = 'none';
+        } catch (err) { showError(5, err.message); btn.style.display = 'inline-flex'; } finally { btn.disabled = false; btn.innerHTML = 'Add Punctuation'; }
+    });
+
+    document.getElementById('editor-punctuate').addEventListener('input', (e) => {
+        state.punctuatedFinalText = e.target.value;
+        document.getElementById('save-final-status').textContent = "";
+    });
+
+    document.getElementById('btn-revert-punctuate').addEventListener('click', () => {
+        state.punctuatedFinalText = state.punctuatedModelText;
+        document.getElementById('editor-punctuate').value = state.punctuatedFinalText;
+        document.getElementById('save-final-status').textContent = "";
+    });
+
+    document.getElementById('btn-save-final').addEventListener('click', async (e) => {
+        state.punctuatedFinalText = document.getElementById('editor-punctuate').value;
+        const btn = e.target;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner" style="margin-right:0.5rem;"></span> Saving...';
+        try {
+            const res = await fetch('/api/save_final', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ task_path: state.task_path, punctuated_final_text: state.punctuatedFinalText })
+            });
+            if(!res.ok) throw new Error("Failed to save.");
+            document.getElementById('save-final-status').textContent = "Saved successfully!";
+        } catch(err) {
+            alert(err.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = 'Save Final Text';
+        }
+    });
+
+    navTo(1);
+</script>
+</body>
+</html>

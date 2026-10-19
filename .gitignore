@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environment
+.venv/
+.phase0-venv/
+venv/
+env/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Environment/secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+.claude/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local data
+data/input/
+data/output/
+data/records/
+data/audio/
+data/**/*.wav
+data/**/*.mp3
+data/**/*.ogg
+data/**/*.flac
+data/**/*.m4a
+data/**/*.aac
+data/**/*.wma
+data/**/*.opus
+
+# Keep .gitkeeps
+!data/**/.gitkeep
+
+# Model/cache files
+models/
+model_cache/
+.cache/
+huggingface/
+hf_cache/
+
+# Local logs/reports if generated
+*.log
+
+data/*.json
+data/vocabulary.json
+data/evaluation/
