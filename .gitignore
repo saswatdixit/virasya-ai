@@ -22,7 +22,6 @@ dist/
 # Environment and secrets
 .env
 .env.*
-!.env.example
 
 # Editors and local configuration
 .vscode/
