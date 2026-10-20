@@ -1,10 +1,6 @@
-# Core runtime and test dependencies. Obsolete local ASR packages are intentionally omitted.
+# Standalone CLI runtime and offline test dependencies.
 numpy>=1.24
 soundfile>=0.12
 soxr>=0.3
-python-dotenv
-flask
+requests>=2.32
 pytest>=8.0
-
-# Optional punctuation dependencies are locked separately in
-# requirements-punctuation.lock and are not needed by `make test`.

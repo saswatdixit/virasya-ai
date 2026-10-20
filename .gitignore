@@ -1,67 +1,38 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
 
-# Virtual environment
+# Virtual environments
 .venv/
 .phase0-venv/
+.phase0-clean/
 venv/
 env/
 
-# Build
+# Build artifacts
 build/
 dist/
 *.egg-info/
 
-# Environment/secrets
+# Environment and secrets
 .env
 .env.*
 !.env.example
 
-# IDE
+# Editors and local configuration
 .vscode/
 .idea/
 .claude/settings.local.json
 
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
+# Local audio, generated transcripts, and other runtime artifacts
+data/
+/*.pcm
+/transcript.txt
 
-# Local data
-data/input/
-data/output/
-data/records/
-data/audio/
-data/**/*.wav
-data/**/*.mp3
-data/**/*.ogg
-data/**/*.flac
-data/**/*.m4a
-data/**/*.aac
-data/**/*.wma
-data/**/*.opus
-
-# Keep .gitkeeps
-!data/**/.gitkeep
-
-# Model/cache files
-models/
-model_cache/
-.cache/
-huggingface/
-hf_cache/
-
-# Local logs/reports if generated
+# Logs
 *.log
-
-data/*.json
-data/vocabulary.json
-data/evaluation/
