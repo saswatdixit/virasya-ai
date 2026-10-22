@@ -12,6 +12,7 @@ import json
 import mimetypes
 import os
 import time
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -399,9 +400,90 @@ class StudioHandler(BaseHTTPRequestHandler):
             return
         self._send_json(story)
 
+    def _extract_bearer_token(self) -> str | None:
+        auth_header = self.headers.get("Authorization") or ""
+        if auth_header.startswith("Bearer "):
+            return auth_header[7:].strip()
+        return None
+
+    def _verify_supabase_bearer_token(self, token: str) -> dict | None:
+        supabase_url = os.getenv("SUPABASE_URL") or "https://tdpeljbmicgjgxjwsvoc.supabase.co"
+        api_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("VITE_SUPABASE_PUBLISHABLE_KEY") or ""
+        url = f"{supabase_url.rstrip('/')}/auth/v1/user"
+        headers = {"Authorization": f"Bearer {token}"}
+        if api_key:
+            headers["apikey"] = api_key
+
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == HTTPStatus.OK:
+                    return json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return None
+        return None
+
+    def _sync_preserved_story_to_supabase(self, story_dict: dict) -> None:
+        supabase_url = os.getenv("SUPABASE_URL")
+        service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_url or not service_key:
+            return
+
+        db_row = {
+            "id": story_dict.get("id"),
+            "user_id": story_dict.get("user_id"),
+            "title": story_dict.get("title", ""),
+            "carrier": story_dict.get("carrier", ""),
+            "relationship": story_dict.get("relationship", ""),
+            "place": story_dict.get("place", ""),
+            "roots": story_dict.get("roots", ""),
+            "category": story_dict.get("category", ""),
+            "language": story_dict.get("language", "Odia"),
+            "period": story_dict.get("period", ""),
+            "email": story_dict.get("email", ""),
+            "written_text": story_dict.get("writtenText") or story_dict.get("written_text", ""),
+            "working_draft": story_dict.get("workingDraft") or story_dict.get("working_draft", ""),
+            "final_text": story_dict.get("final_text") or story_dict.get("story", ""),
+            "story": story_dict.get("story", ""),
+            "audio": story_dict.get("audio"),
+            "raw_transcripts": story_dict.get("raw_transcripts") or {},
+            "vocabulary": story_dict.get("vocabulary") or [],
+            "punctuation": story_dict.get("punctuation") or {},
+            "final_settings": story_dict.get("finalSettings") or {},
+            "status": "preserved",
+            "visibility": story_dict.get("visibility", "public"),
+            "confirmed": True,
+            "permission_confirmed": True,
+            "provenance_id": story_dict.get("provenance_id"),
+            "provenance_hash": story_dict.get("provenance_hash"),
+            "preserved_at": story_dict.get("preserved_at"),
+        }
+
+        url = f"{supabase_url.rstrip('/')}/rest/v1/stories"
+        req_data = json.dumps(db_row).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Prefer": "resolution=merge-duplicates",
+        }
+        req = urllib.request.Request(url, data=req_data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+        except Exception:
+            pass
+
     def _handle_preserve_story(self, story_id: str) -> None:
         payload = self._json_body()
         existing = get_story(story_id) or {"id": story_id}
+
+        # Check for verified Supabase user via Bearer token (never trust unverified client user_id)
+        token = self._extract_bearer_token()
+        if token:
+            verified_user = self._verify_supabase_bearer_token(token)
+            if verified_user and "id" in verified_user:
+                existing["user_id"] = verified_user["id"]
 
         existing["status"] = "preserved"
         existing["finalSettings"] = {
@@ -427,6 +509,10 @@ class StudioHandler(BaseHTTPRequestHandler):
         existing["provenance_hash"] = prov_hash
 
         saved = save_story(existing)
+
+        # Sync to Supabase if configured (non-blocking)
+        self._sync_preserved_story_to_supabase(saved)
+
         self._send_json({
             "status": "success",
             "story": saved,

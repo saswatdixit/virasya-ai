@@ -4,6 +4,11 @@
  */
 
 import { SAMPLE_EXPLORE_STORIES } from "../explore/sampleStories";
+import {
+  getSupabase,
+  fetchExploreStoriesFromSupabase,
+  fetchExploreStoryDetailFromSupabase,
+} from "../supabase";
 
 export interface StoryPayload {
   id?: string;
@@ -11,17 +16,25 @@ export interface StoryPayload {
   carrier?: string;
   relationship?: string;
   roots?: string;
+  place?: string;
   category?: string;
   language?: string;
   period?: string;
   email?: string;
   writtenText?: string;
+  final_text?: string;
+  story?: string;
+  provenance_id?: string;
+  provenance_hash?: string;
+  preserved_at?: string;
   audio?: {
     filename: string;
     url?: string;
     size?: number | null;
     duration?: number | null;
     kind: string;
+    storage_path?: string;
+    bucket?: string;
   } | null;
   workingDraft?: string;
   vocabulary?: Array<{
@@ -42,6 +55,10 @@ export interface StoryPayload {
     visibility?: string;
     confirmed?: boolean;
     permissionConfirmed?: boolean;
+    provenance_id?: string;
+    provenance_hash?: string;
+    preserved_at?: string;
+    [key: string]: any;
   };
   status?: "draft" | "preserved";
   updated_at?: string;
@@ -112,17 +129,73 @@ export function getApiBase(): string {
   return "";
 }
 
+/**
+ * Safely retrieves current Supabase session access token for protected ASR backend calls.
+ * Never throws, never logs tokens, and handles missing or expired sessions gracefully.
+ */
+export async function getAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const supabase = getSupabase();
+    if (!supabase) return {};
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data?.session?.access_token) return {};
+    return {
+      Authorization: `Bearer ${data.session.access_token}`,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Fetches an authenticated audio file using the user's Bearer token and returns an ephemeral Blob URL.
+ * Automatically eliminates query-string tokens from media URLs and prevents browser history leaks.
+ */
+export async function fetchAuthenticatedAudioBlob(audioUrl: string): Promise<string> {
+  if (!audioUrl) throw new Error("No audio URL provided");
+  if (audioUrl.startsWith("blob:") || audioUrl.startsWith("data:")) {
+    return audioUrl;
+  }
+  const base = getApiBase();
+  const targetUrl = audioUrl.startsWith("http://") || audioUrl.startsWith("https://")
+    ? audioUrl
+    : `${base}${audioUrl.startsWith("/") ? "" : "/"}${audioUrl}`;
+
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(targetUrl, {
+    method: "GET",
+    headers: { ...authHeaders },
+  });
+
+  if (res.status === 401) {
+    throw new Error("Authentication required to access this recording.");
+  }
+  if (res.status === 404) {
+    throw new Error("Audio recording not found or unauthorized.");
+  }
+  if (!res.ok) {
+    throw new Error(`Failed to load audio (${res.status})`);
+  }
+
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 export async function saveStoryToBackend(story: StoryPayload): Promise<{ status: string; story: StoryPayload }> {
   if (!isBackendConfigured()) {
     return { status: "preview_local", story };
   }
 
   const base = getApiBase();
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${base}/api/stories`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify(story),
   });
+  if (res.status === 401) {
+    throw new Error("Authentication required. Please sign in to save your story.");
+  }
   if (!res.ok) {
     throw new Error(`Failed to save story: ${res.statusText}`);
   }
@@ -134,7 +207,13 @@ export async function getStoryFromBackend(storyId: string): Promise<StoryPayload
     throw new Error("Backend not configured. Story cannot be retrieved from remote server.");
   }
   const base = getApiBase();
-  const res = await fetch(`${base}/api/stories/${encodeURIComponent(storyId)}`);
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${base}/api/stories/${encodeURIComponent(storyId)}`, {
+    headers: { ...authHeaders },
+  });
+  if (res.status === 401) {
+    throw new Error("Authentication required. Please sign in to view this story.");
+  }
   if (!res.ok) {
     throw new Error(`Failed to get story: ${res.statusText}`);
   }
@@ -146,7 +225,13 @@ export async function listStoriesFromBackend(): Promise<StoryPayload[]> {
     return [];
   }
   const base = getApiBase();
-  const res = await fetch(`${base}/api/stories`);
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${base}/api/stories`, {
+    headers: { ...authHeaders },
+  });
+  if (res.status === 401) {
+    throw new Error("Authentication required. Please sign in to list your stories.");
+  }
   if (!res.ok) {
     throw new Error(`Failed to list stories: ${res.statusText}`);
   }
@@ -158,11 +243,18 @@ export async function preserveStoryOnBackend(storyId: string, payload: Partial<S
     throw new Error("Permanent sovereign preservation requires the Virasya AI backend server. Running in preview mode.");
   }
   const base = getApiBase();
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${base}/api/stories/${encodeURIComponent(storyId)}/preserve`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    },
     body: JSON.stringify(payload),
   });
+  if (res.status === 401) {
+    throw new Error("Authentication required. Please sign in to preserve this story.");
+  }
   if (!res.ok) {
     throw new Error(`Failed to preserve story: ${res.statusText}`);
   }
@@ -177,6 +269,7 @@ export async function uploadAudioToBackend(file: File): Promise<AudioUploadRespo
   }
 
   const base = getApiBase();
+  const authHeaders = await getAuthHeaders();
   const formData = new FormData();
   formData.append("file", file, file.name);
 
@@ -184,6 +277,7 @@ export async function uploadAudioToBackend(file: File): Promise<AudioUploadRespo
   try {
     res = await fetch(`${base}/api/upload`, {
       method: "POST",
+      headers: { ...authHeaders },
       body: formData,
     });
   } catch (networkErr: any) {
@@ -191,6 +285,10 @@ export async function uploadAudioToBackend(file: File): Promise<AudioUploadRespo
     throw new Error(
       "Unable to connect to the Virasya AI backend. Please verify your backend server is active."
     );
+  }
+
+  if (res.status === 401) {
+    throw new Error("Authentication required. Please sign in to upload audio recordings.");
   }
 
   if (!res.ok) {
@@ -231,11 +329,15 @@ export async function saveVocabularyToBackend(words: VocabularyWordItem[]): Prom
     return { status: "preview_local", count: words.length, entries: words };
   }
   const base = getApiBase();
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${base}/api/vocabulary`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ words }),
   });
+  if (res.status === 401) {
+    throw new Error("Authentication required. Please sign in to update vocabulary.");
+  }
   if (!res.ok) {
     throw new Error(`Failed to save vocabulary: ${res.statusText}`);
   }
@@ -247,7 +349,13 @@ export async function getVocabularyFromBackend(): Promise<any[]> {
     return [];
   }
   const base = getApiBase();
-  const res = await fetch(`${base}/api/vocabulary`);
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${base}/api/vocabulary`, {
+    headers: { ...authHeaders },
+  });
+  if (res.status === 401) {
+    throw new Error("Authentication required. Please sign in to view vocabulary.");
+  }
   if (!res.ok) {
     throw new Error(`Failed to fetch vocabulary: ${res.statusText}`);
   }
@@ -374,12 +482,21 @@ export async function punctuateTextOnBackend(text: string, taskPath?: string): P
   }
 
   const base = getApiBase();
+  const authHeaders = await getAuthHeaders();
   try {
     const res = await fetch(`${base}/api/punctuate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({ text, task_path: taskPath }),
     });
+    if (res.status === 401) {
+      return {
+        status: "error",
+        supported: false,
+        error: "Authentication required to use the punctuation restoration service.",
+        punctuated_text: text,
+      };
+    }
     if (!res.ok) {
       return {
         status: "error",
@@ -421,11 +538,12 @@ export async function transcribeAudioOnBackend(
   }
 
   const base = getApiBase();
+  const authHeaders = await getAuthHeaders();
   let res: Response;
   try {
     res = await fetch(`${base}/api/transcribe`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({
         filename,
         language,
@@ -440,6 +558,10 @@ export async function transcribeAudioOnBackend(
     throw new Error(
       "Unable to connect to the local Virasya AI backend. Please ensure the backend server is running on port 5000."
     );
+  }
+
+  if (res.status === 401) {
+    throw new Error("Authentication required. Please sign in to perform speech transcription.");
   }
 
   if (!res.ok) {
@@ -488,8 +610,11 @@ export interface ExploreDetailStory extends ExploreStoryCard {
   audio?: {
     filename: string;
     url?: string;
-    duration?: number;
-    size?: number;
+    duration?: number | null;
+    size?: number | null;
+    kind?: string;
+    storage_path?: string;
+    bucket?: string;
   } | null;
   raw_transcripts?: {
     vaani?: {
@@ -518,8 +643,22 @@ export async function fetchExploreFeed(filters?: {
   language?: string;
   place?: string;
 }): Promise<ExploreFeedResponse> {
+  // 1. Try querying public preserved stories from Supabase first
+  try {
+    const supabaseResult = await fetchExploreStoriesFromSupabase(filters);
+    if (supabaseResult && supabaseResult.stories && supabaseResult.stories.length > 0) {
+      return {
+        status: "success",
+        count: supabaseResult.count,
+        stories: supabaseResult.stories,
+      };
+    }
+  } catch (supabaseErr: any) {
+    console.warn("[Explore] Supabase query failed, falling back to local backend:", supabaseErr?.message);
+  }
+
+  // 2. Fall back to local backend explore feed if Supabase returned 0 stories or is unconfigured
   if (!isBackendConfigured()) {
-    // Return honest count of 0 public stories preserved when backend is unconfigured
     return {
       status: "success",
       count: 0,
@@ -557,6 +696,16 @@ export async function fetchExploreStoryDetail(storyId: string): Promise<{ status
   const sample = SAMPLE_EXPLORE_STORIES.find((s) => s.id === storyId);
   if (sample) {
     return { status: "success", story: sample };
+  }
+
+  // Check Supabase public stories first
+  try {
+    const supabaseDetail = await fetchExploreStoryDetailFromSupabase(storyId);
+    if (supabaseDetail) {
+      return { status: "success", story: supabaseDetail };
+    }
+  } catch (err) {
+    // Continue to local backend
   }
 
   if (!isBackendConfigured()) {

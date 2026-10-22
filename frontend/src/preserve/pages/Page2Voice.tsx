@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { usePreserve } from "../context/PreserveContext";
+import { useAuth } from "../../auth";
+import { uploadAudioToPrivateBucket } from "../../supabase";
 import { formatTime } from "../utils";
 import AudioPlayer from "../components/AudioPlayer";
 import { uploadAudioToBackend } from "../api";
@@ -21,6 +23,7 @@ export default function Page2Voice() {
     setIsLanguageConfirmed,
     retryTranscription,
   } = usePreserve();
+  const { user } = useAuth();
 
   const [mode, setMode] = useState<"record" | "upload">("record");
   const [recState, setRecState] = useState<"idle" | "requesting" | "recording" | "paused">("idle");
@@ -138,12 +141,27 @@ export default function Page2Voice() {
         setUploading(true);
         try {
           const res = await uploadAudioToBackend(file);
+          let audioUrl = res.url;
+          let storagePath: string | undefined = undefined;
+          if (user?.id) {
+            try {
+              const cloudRes = await uploadAudioToPrivateBucket(file, res.filename || filename, user.id);
+              if (cloudRes.signedUrl) {
+                audioUrl = cloudRes.signedUrl;
+                storagePath = cloudRes.path;
+              }
+            } catch (cloudErr) {
+              console.warn("[Cloud Storage] Private audio upload warning:", cloudErr);
+            }
+          }
           setAudio({
             name: res.filename,
-            url: res.url,
+            url: audioUrl,
             size: res.size,
             duration: elapsedRef.current,
             kind: "recorded",
+            storage_path: storagePath,
+            bucket: storagePath ? "story-recordings-private" : undefined,
           });
           setReplacing(false);
           setRecState("idle");
@@ -223,6 +241,20 @@ export default function Page2Voice() {
     setUploading(true);
     try {
       const res = await uploadAudioToBackend(file);
+      let audioUrl = res.url;
+      let storagePath: string | undefined = undefined;
+      if (user?.id) {
+        try {
+          const cloudRes = await uploadAudioToPrivateBucket(file, res.filename || file.name, user.id);
+          if (cloudRes.signedUrl) {
+            audioUrl = cloudRes.signedUrl;
+            storagePath = cloudRes.path;
+          }
+        } catch (cloudErr) {
+          console.warn("[Cloud Storage] Private audio upload warning:", cloudErr);
+        }
+      }
+
       // Determine audio duration
       const audioEl = new Audio();
       const objectUrl = URL.createObjectURL(file);
@@ -230,10 +262,12 @@ export default function Page2Voice() {
       audioEl.onloadedmetadata = () => {
         setAudio({
           name: res.filename,
-          url: res.url,
+          url: audioUrl,
           size: res.size,
           duration: audioEl.duration || null,
           kind: "uploaded",
+          storage_path: storagePath,
+          bucket: storagePath ? "story-recordings-private" : undefined,
         });
         setReplacing(false);
         setUploading(false);
@@ -242,10 +276,12 @@ export default function Page2Voice() {
       audioEl.onerror = () => {
         setAudio({
           name: res.filename,
-          url: res.url,
+          url: audioUrl,
           size: res.size,
           duration: null,
           kind: "uploaded",
+          storage_path: storagePath,
+          bucket: storagePath ? "story-recordings-private" : undefined,
         });
         setReplacing(false);
         setUploading(false);

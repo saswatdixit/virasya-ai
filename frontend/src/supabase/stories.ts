@@ -1,0 +1,296 @@
+/**
+ * Virasya Supabase Story Persistence Module
+ *
+ * Implements real, client-safe persistence of cultural stories to the
+ * Supabase `public.stories` table on the staging environment.
+ *
+ * Adheres strictly to:
+ * - Row Level Security (RLS) policies on staging Supabase
+ * - Integrity trigger `trigger_protect_story_integrity`
+ * - Cryptographic provenance generation (VIR-{sha256[:12]})
+ */
+
+import { getSupabase, isSupabaseConfigured } from "./client";
+import { storyRowToStoryPayload } from "./adapters";
+import type { StoryPayload, PreserveResponse, ExploreStoryCard, ExploreDetailStory } from "../preserve/api";
+
+/**
+ * Computes deterministic cryptographic provenance identifier VIR-{sha256[:12]}
+ * matching the Virasya archival design specification.
+ */
+export async function computeProvenanceId(params: {
+  storyId: string;
+  timestamp: string;
+  title: string;
+  carrier: string;
+  text: string;
+}): Promise<{ provenanceId: string; provenanceHash: string }> {
+  const seed = `${params.storyId}:${params.timestamp}:${params.title}:${params.carrier}:${params.text.slice(0, 40)}`;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(seed);
+
+  // Use standard Web Crypto API (available in modern browsers and modern Node)
+  const subtle = typeof window !== "undefined" && window.crypto?.subtle
+    ? window.crypto.subtle
+    : (globalThis as any).crypto?.subtle;
+
+  if (subtle) {
+    const hashBuffer = await subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    const provenanceHash = hex.slice(0, 12).toUpperCase();
+    return {
+      provenanceId: `VIR-${provenanceHash}`,
+      provenanceHash,
+    };
+  }
+
+  // Pure JS fallback if SubtleCrypto is unavailable in certain environments
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash << 5) - hash + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  const fallbackHex = Math.abs(hash).toString(16).padStart(12, "0").slice(0, 12).toUpperCase();
+  return {
+    provenanceId: `VIR-${fallbackHex}`,
+    provenanceHash: fallbackHex,
+  };
+}
+
+/**
+ * Persists an authenticated user's story to Supabase public.stories table.
+ *
+ * If the user is unauthenticated or the database request fails, this function
+ * strictly throws an error rather than fabricating a demo receipt.
+ */
+export async function preserveStoryToSupabase(
+  story: StoryPayload,
+  userId: string
+): Promise<PreserveResponse> {
+  const supabase = getSupabase();
+  if (!supabase || !isSupabaseConfigured()) {
+    throw new Error(
+      "Supabase connection is not configured in this environment. Permanent persistence requires active Supabase credentials."
+    );
+  }
+
+  if (!userId) {
+    throw new Error(
+      "Authentication required: You must be signed in to permanently preserve a story to the Virasya archive."
+    );
+  }
+
+  const storyId = story.id || `story_${Date.now()}`;
+  const now = new Date().toISOString();
+  const title = story.title || "Untitled Story";
+  const carrier = story.carrier || "";
+  const workingText =
+    story.final_text ||
+    story.workingDraft ||
+    story.writtenText ||
+    (story as any).story ||
+    "";
+
+  // Compute sovereign provenance ID
+  const { provenanceId, provenanceHash } = await computeProvenanceId({
+    storyId,
+    timestamp: now,
+    title,
+    carrier,
+    text: workingText,
+  });
+
+  // Prepare payload with provenance stored safely in finalSettings JSONB
+  const payloadWithProvenance: StoryPayload = {
+    ...story,
+    id: storyId,
+    finalSettings: {
+      ...(story.finalSettings || {}),
+      visibility: story.finalSettings?.visibility || (story as any).visibility || "public",
+      confirmed: true,
+      permissionConfirmed: true,
+      provenance_id: provenanceId,
+      provenance_hash: provenanceHash,
+      preserved_at: now,
+    },
+  };
+
+  // Invoke trusted server-side Edge Function
+  // The Edge Function verifies the user's JWT, enforces ownership, validates narrative integrity,
+  // computes the cryptographic provenance hash, and seals the record using server-side service_role.
+  const { data, error } = await supabase.functions.invoke<PreserveResponse>("preserve-story", {
+    body: payloadWithProvenance,
+  });
+
+  if (error) {
+    let detailMessage = error.message;
+    // Check if error body has more specific JSON error
+    if ((error as any).context && typeof (error as any).context.json === "function") {
+      try {
+        const errJson = await (error as any).context.json();
+        if (errJson?.error) detailMessage = errJson.error;
+      } catch {}
+    }
+    console.error("Trusted server-side preservation failed:", detailMessage);
+    throw new Error(`Archival preservation failed: ${detailMessage}`);
+  }
+
+  if (!data || data.status !== "success") {
+    const errorMsg = (data as any)?.error || "Server preservation did not return success.";
+    throw new Error(`Archival preservation failed: ${errorMsg}`);
+  }
+
+  const savedPayload = data.story ? storyRowToStoryPayload(data.story as any) : (payloadWithProvenance as any);
+
+  return {
+    status: "success",
+    story: {
+      ...savedPayload,
+      provenance_id: data.provenance_id,
+      provenance_hash: data.provenance_hash,
+      preserved_at: data.preserved_at,
+    },
+    preserved_at: data.preserved_at,
+    provenance_id: data.provenance_id,
+    provenance_hash: data.provenance_hash,
+  };
+}
+
+/**
+ * Queries Supabase public.stories for preserved public stories.
+ */
+export async function fetchExploreStoriesFromSupabase(filters?: {
+  search?: string;
+  q?: string;
+  category?: string;
+  language?: string;
+  place?: string;
+}): Promise<{ count: number; stories: ExploreStoryCard[] }> {
+  const supabase = getSupabase();
+  if (!supabase || !isSupabaseConfigured()) {
+    return { count: 0, stories: [] };
+  }
+
+  try {
+    let query = supabase
+      .from("stories")
+      .select("*")
+      .eq("status", "preserved")
+      .eq("visibility", "public")
+      .order("preserved_at", { ascending: false, nullsFirst: false });
+
+    if (filters?.category && filters.category !== "All") {
+      query = query.ilike("category", filters.category);
+    }
+    if (filters?.language && filters.language !== "All") {
+      query = query.ilike("language", filters.language);
+    }
+    if (filters?.place) {
+      query = query.ilike("place", `%${filters.place}%`);
+    }
+
+    const { data, error } = await query;
+    if (error || !data) {
+      console.warn("Could not query stories from Supabase:", error?.message);
+      return { count: 0, stories: [] };
+    }
+
+    let rows = data;
+    const searchTerm = (filters?.search || filters?.q || "").trim().toLowerCase();
+    if (searchTerm) {
+      rows = rows.filter((r) => {
+        return (
+          (r.title && r.title.toLowerCase().includes(searchTerm)) ||
+          (r.carrier && r.carrier.toLowerCase().includes(searchTerm)) ||
+          (r.place && r.place.toLowerCase().includes(searchTerm)) ||
+          (r.final_text && r.final_text.toLowerCase().includes(searchTerm)) ||
+          (r.written_text && r.written_text.toLowerCase().includes(searchTerm))
+        );
+      });
+    }
+
+    const cards: ExploreStoryCard[] = rows.map((row) => {
+      const excerpt = (row.final_text || row.written_text || row.story || "").slice(0, 150);
+      const settingsProvId = (row.final_settings as any)?.provenance_id;
+      return {
+        id: row.id,
+        title: row.title || "Untitled Story",
+        carrier: row.carrier || "Not specified",
+        category: row.category || "General",
+        place: row.place || row.roots || "Odisha",
+        roots: row.roots,
+        language: row.language || "Odia",
+        period: row.period || "Traditional",
+        relationship: row.relationship || "",
+        excerpt: excerpt ? (excerpt.length >= 150 ? `${excerpt}…` : excerpt) : "Oral heritage record",
+        word_count: (row.final_text || row.written_text || "").split(/\s+/).filter(Boolean).length,
+        preserved_at: row.preserved_at || row.created_at,
+        provenance_id: row.provenance_id || settingsProvId || `VIR-${row.id.slice(-6).toUpperCase()}`,
+        vocabulary_count: Array.isArray(row.vocabulary) ? row.vocabulary.length : 0,
+        has_audio: Boolean(row.audio),
+        vocabulary: Array.isArray(row.vocabulary) ? (row.vocabulary as any) : [],
+      };
+    });
+
+    return {
+      count: cards.length,
+      stories: cards,
+    };
+  } catch (err: any) {
+    console.warn("Supabase explore query error:", err.message);
+    return { count: 0, stories: [] };
+  }
+}
+
+/**
+ * Retrieves a single preserved story record by ID from Supabase.
+ */
+export async function fetchExploreStoryDetailFromSupabase(
+  storyId: string
+): Promise<ExploreDetailStory | null> {
+  const supabase = getSupabase();
+  if (!supabase || !isSupabaseConfigured()) {
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("stories")
+      .select("*")
+      .eq("id", storyId)
+      .single();
+
+    if (error || !data) {
+      return null;
+    }
+
+    const payload = storyRowToStoryPayload(data);
+    const excerpt = (data.final_text || data.written_text || data.story || "").slice(0, 150);
+    const settingsProvId = (data.final_settings as any)?.provenance_id;
+
+    return {
+      id: data.id,
+      title: data.title || "Untitled Story",
+      carrier: data.carrier || "Not specified",
+      category: data.category || "General",
+      place: data.place || data.roots || "Odisha",
+      roots: data.roots,
+      language: data.language || "Odia",
+      period: data.period || "Traditional",
+      relationship: data.relationship || "",
+      excerpt: excerpt ? `${excerpt}…` : "Oral heritage record",
+      word_count: (data.final_text || data.written_text || "").split(/\s+/).filter(Boolean).length,
+      preserved_at: data.preserved_at || data.created_at,
+      provenance_id: data.provenance_id || settingsProvId || `VIR-${data.id.slice(-6).toUpperCase()}`,
+      vocabulary_count: Array.isArray(data.vocabulary) ? data.vocabulary.length : 0,
+      has_audio: Boolean(data.audio),
+      vocabulary: Array.isArray(data.vocabulary) ? (data.vocabulary as any) : [],
+      final_text: data.final_text || data.written_text || data.story || "",
+      audio: payload.audio,
+      raw_transcripts: data.raw_transcripts as any,
+    };
+  } catch {
+    return null;
+  }
+}

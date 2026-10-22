@@ -2,36 +2,18 @@
  * Virasya Supabase Authentication Types
  *
  * Defines the contract for user identity, sessions, and authentication lifecycle.
- * Designed to seamlessly bind to @supabase/supabase-js when installed.
+ * Binds directly to @supabase/supabase-js types.
  */
 
-export interface AuthUser {
-  id: string;
-  email?: string;
-  phone?: string;
-  created_at?: string;
-  last_sign_in_at?: string;
-  user_metadata?: Record<string, any>;
-  app_metadata?: Record<string, any>;
-}
+import type { User, Session, AuthError } from "@supabase/supabase-js";
 
-export interface AuthSession {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;
-  token_type: string;
-  user: AuthUser;
-}
-
-export interface AuthError {
-  message: string;
-  status?: number;
-  name?: string;
-}
+export type AuthUser = User;
+export type AuthSession = Session;
+export type { AuthError };
 
 export interface AuthContextType {
-  user: AuthUser | null;
-  session: AuthSession | null;
+  user: User | null;
+  session: Session | null;
   loading: boolean;
   isConfigured: boolean;
   authModalOpen: boolean;

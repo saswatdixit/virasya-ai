@@ -16,6 +16,8 @@ export interface AudioItem {
   size: number | null;
   duration: number | null;
   url: string | null;
+  storage_path?: string;
+  bucket?: string;
 }
 
 export interface ModelTranscript {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import type { AudioItem } from "../types";
 import { formatTime, formatSize } from "../utils";
+import { fetchAuthenticatedAudioBlob } from "../api";
 
 export default function AudioPlayer({
   audio,
@@ -15,9 +16,57 @@ export default function AudioPlayer({
 }) {
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
+  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(
+    audio?.url && (audio.url.startsWith("blob:") || audio.url.startsWith("data:"))
+      ? audio.url
+      : undefined
+  );
+  const [loadError, setLoadError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const dur = audio?.duration || 0;
+
+  // Resolve authenticated audio blob URL when audio.url is a remote path
+  useEffect(() => {
+    if (!audio?.url) {
+      setResolvedSrc(undefined);
+      setLoadError(null);
+      return;
+    }
+
+    if (audio.url.startsWith("blob:") || audio.url.startsWith("data:")) {
+      setResolvedSrc(audio.url);
+      setLoadError(null);
+      return;
+    }
+
+    let active = true;
+    let createdUrl: string | null = null;
+
+    fetchAuthenticatedAudioBlob(audio.url)
+      .then((blobUrl) => {
+        if (!active) {
+          URL.revokeObjectURL(blobUrl);
+          return;
+        }
+        createdUrl = blobUrl;
+        setResolvedSrc(blobUrl);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        if (active) {
+          setLoadError(err.message || "Failed to load audio recording.");
+          setResolvedSrc(undefined);
+        }
+      });
+
+    return () => {
+      active = false;
+      if (createdUrl) {
+        URL.revokeObjectURL(createdUrl);
+      }
+    };
+  }, [audio?.url]);
 
   // For simulated demo playback
   useEffect(() => {
@@ -55,7 +104,7 @@ export default function AudioPlayer({
       el.removeEventListener("pause", handlePause);
       el.removeEventListener("play", handlePlay);
     };
-  }, [audio?.url]);
+  }, [resolvedSrc]);
 
   if (!audio) return null;
 
@@ -187,11 +236,15 @@ export default function AudioPlayer({
             Simulated player · sample representation
           </span>
         </div>
+      ) : loadError ? (
+        <div style={{ color: "var(--v-alert)", fontSize: 13, padding: "8px 0" }}>
+          {loadError}
+        </div>
       ) : (
         <div className="p-audio-player">
           <audio
             ref={audioRef}
-            src={audio.url || undefined}
+            src={resolvedSrc || undefined}
             controls
             style={{ width: "100%", height: 38 }}
             preload="metadata"

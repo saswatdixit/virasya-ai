@@ -37,3 +37,4 @@ virasya-ai/transcript.txt
 .idea/
 .DS_Store
 Thumbs.db
+.temp/

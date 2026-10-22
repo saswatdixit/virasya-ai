@@ -37,6 +37,11 @@ import {
   fetchModelStatus,
   isBackendConfigured,
 } from "../api";
+import { useAuth } from "../../auth";
+import {
+  preserveStoryToSupabase,
+  isSupabaseConfigured,
+} from "../../supabase";
 
 const INITIAL_STATE: PreserveState = {
   stage: 1,
@@ -162,6 +167,7 @@ interface PreserveContextType {
 const PreserveContext = createContext<PreserveContextType | null>(null);
 
 export function PreserveProvider({ children }: { children: ReactNode }) {
+  const { user, openAuthModal } = useAuth();
   const [state, setState] = useState<PreserveState>(() => {
     // Determine initial stage based on URL if possible
     const path = window.location.pathname.replace(/\/+$/, "") || "/preserve-your-story";
@@ -880,6 +886,8 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
             size: state.audio.size,
             duration: state.audio.duration,
             kind: state.audio.kind,
+            storage_path: state.audio.storage_path,
+            bucket: state.audio.bucket,
           }
         : null,
       raw_transcripts: {
@@ -902,32 +910,54 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
       permissionConfirmed: state.final.permissionConfirmed,
     };
 
-    if (!isBackendConfigured()) {
-      const demoProv = `virasya_preview_${Date.now().toString(16)}`;
+    // 1. If Supabase is configured, enforce real authenticated database persistence
+    if (isSupabaseConfigured()) {
+      if (!user) {
+        openAuthModal();
+        throw new Error(
+          "Authentication required: Please sign in or create an account to permanently preserve your story to the Virasya repository."
+        );
+      }
+
+      // Execute real database persistence to Supabase public.stories
+      const res = await preserveStoryToSupabase(payload as any, user.id);
+
+      // If local workbench backend is also reachable, sync to local output directory as well
+      if (isBackendConfigured()) {
+        try {
+          await preserveStoryOnBackend(storyId, payload);
+        } catch (backendErr) {
+          console.warn("Local backend sync notice:", backendErr);
+        }
+      }
+
       setState((s) => ({
         ...s,
-        provenanceId: demoProv,
-        storyId: storyId,
-        final: { ...s.final, isPreserved: true, isPreviewPreserved: true },
+        provenanceId: res.provenance_id,
+        storyId: res.story.id,
+        final: { ...s.final, isPreserved: true, isPreviewPreserved: false },
       }));
-      return {
-        status: "success",
-        story: { id: storyId, ...state.form },
-        preserved_at: new Date().toISOString(),
-        provenance_id: demoProv,
-        provenance_hash: "virasya_demo_preview_provenance_hash",
-      };
+
+      return res;
     }
 
-    const res = await preserveStoryOnBackend(storyId, payload);
-    setState((s) => ({
-      ...s,
-      provenanceId: res.provenance_id,
-      storyId: res.story.id,
-      final: { ...s.final, isPreserved: true, isPreviewPreserved: false },
-    }));
-    return res;
-  }, [state]);
+    // 2. If Supabase is not configured, check if local Flask backend is configured
+    if (isBackendConfigured()) {
+      const res = await preserveStoryOnBackend(storyId, payload);
+      setState((s) => ({
+        ...s,
+        provenanceId: res.provenance_id,
+        storyId: res.story.id,
+        final: { ...s.final, isPreserved: true, isPreviewPreserved: false },
+      }));
+      return res;
+    }
+
+    // 3. Fail-closed: Never claim preservation or show a fake receipt if no database/backend is connected
+    throw new Error(
+      "Archival database connection is not available in this environment. Permanent persistence requires an active Supabase connection."
+    );
+  }, [state, user, openAuthModal]);
 
   const resetAll = useCallback(() => {
     try {

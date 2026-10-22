@@ -22,6 +22,7 @@ dist/
 # Environment and secrets
 .env
 .env.*
+!.env.example
 
 # Editors and local configuration
 .vscode/
@@ -35,3 +36,4 @@ data/
 
 # Logs
 *.log
+supabase/.temp/
