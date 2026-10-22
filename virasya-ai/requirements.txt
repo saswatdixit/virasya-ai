@@ -1,0 +1,6 @@
+# Standalone CLI runtime and offline test dependencies.
+numpy>=1.24
+soundfile>=0.12
+soxr>=0.3
+requests>=2.32
+pytest>=8.0

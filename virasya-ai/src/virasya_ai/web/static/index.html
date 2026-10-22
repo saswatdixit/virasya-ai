@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4eee3">
+  <title>Virasya Transcription Studio</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="site-header">
+      <a class="brand" href="#select" aria-label="Virasya Transcription Studio home">
+        <span class="brand-mark" aria-hidden="true">V</span>
+        <span><strong>Virasya</strong><small>Transcription Studio</small></span>
+      </a>
+      <div class="header-actions">
+        <span class="provider-note">Prisma v2.5 · Hindi configured</span>
+        <button id="theme-toggle" class="icon-button" type="button" aria-label="Switch to dark theme" title="Toggle theme">☾</button>
+      </div>
+    </header>
+
+    <nav class="progress" aria-label="Transcription steps">
+      <button class="progress-step is-active" data-go="select" type="button"><span>01</span>Choose audio</button>
+      <span class="progress-line" aria-hidden="true"></span>
+      <button class="progress-step" data-go="edit" type="button"><span>02</span>Review text</button>
+      <span class="progress-line" aria-hidden="true"></span>
+      <button class="progress-step" data-go="final" type="button"><span>03</span>Save transcript</button>
+    </nav>
+
+    <main id="app" aria-live="polite">
+      <section class="page is-active" data-page="select" aria-labelledby="select-title">
+        <div class="page-heading">
+          <p class="eyebrow">A quiet place for spoken words</p>
+          <h1 id="select-title">Start a transcription</h1>
+          <p>Choose an audio file and the language spoken in it.</p>
+        </div>
+
+        <div class="selection-grid">
+          <div>
+            <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-describedby="format-hint">
+              <input id="audio-input" type="file" accept=".wav,.mp3,.ogg,.flac,.aac,.m4a,audio/*" hidden>
+              <div class="upload-glyph" aria-hidden="true">↥</div>
+              <h2>Drop an audio file here</h2>
+              <p>or <button id="browse-button" class="text-button" type="button">browse from your computer</button></p>
+              <small id="format-hint">WAV, MP3, OGG, FLAC, AAC, or M4A · up to 60 seconds</small>
+            </div>
+            <div id="file-card" class="file-card is-hidden" aria-live="polite">
+              <span class="file-icon" aria-hidden="true">♫</span>
+              <div class="file-details"><strong id="file-name"></strong><small id="file-meta"></small></div>
+              <button id="remove-file" class="icon-button small" type="button" aria-label="Remove selected audio">×</button>
+            </div>
+            <p id="select-error" class="message error is-hidden" role="alert"></p>
+          </div>
+
+          <div class="language-panel">
+            <label for="language-select">Language spoken</label>
+            <select id="language-select" aria-describedby="language-help"></select>
+            <p id="language-help" class="field-help">Choose the language spoken in the audio. The selected code is sent unchanged to the provider.</p>
+            <div class="privacy-note"><span aria-hidden="true">◌</span><p>Your audio stays here until you choose <em>Transcribe audio</em>. Selecting a file does not contact the transcription service.</p></div>
+          </div>
+        </div>
+
+        <div class="page-footer-actions">
+          <span class="status-placeholder">Ready when you are.</span>
+          <button id="continue-button" class="primary-button" type="button">Continue to transcription <span aria-hidden="true">→</span></button>
+        </div>
+      </section>
+
+      <section class="page" data-page="edit" aria-labelledby="edit-title" hidden>
+        <div class="page-heading compact">
+          <p class="eyebrow">Step two · careful listening</p>
+          <h1 id="edit-title">Review your transcription</h1>
+          <p>Compare the original transcription with your own corrections.</p>
+        </div>
+        <div class="context-strip"><span id="edit-file-name">No audio selected</span><span id="edit-language">Hindi · hi-IN</span></div>
+
+        <div class="workspace-stack">
+          <div class="text-card raw-card">
+            <div class="card-heading"><div><span class="label">Raw transcription</span><small>Unmodified response from the provider</small></div><span class="lock-label">Read only</span></div>
+            <textarea id="raw-text" readonly placeholder="Your raw transcription will appear here."></textarea>
+          </div>
+          <div class="text-card edit-card">
+            <div class="card-heading"><div><label class="label" for="edited-text">Manually reviewed text</label><small>Make corrections directly in this copy</small></div><span id="edit-status" class="save-indicator">Not yet saved</span></div>
+            <textarea id="edited-text" placeholder="Your reviewed text will appear here." spellcheck="false"></textarea>
+          </div>
+        </div>
+        <div id="edit-message" class="message is-hidden" role="status"></div>
+        <div class="page-footer-actions split">
+          <button class="secondary-button" data-back="select" type="button">← Back</button>
+          <div class="action-group"><button id="transcribe-button" class="primary-button" type="button">Transcribe audio <span aria-hidden="true">✦</span></button><button id="to-final-button" class="primary-button" type="button" disabled>Continue to final review <span aria-hidden="true">→</span></button></div>
+        </div>
+      </section>
+
+      <section class="page" data-page="final" aria-labelledby="final-title" hidden>
+        <div class="page-heading compact">
+          <p class="eyebrow">Step three · your final word</p>
+          <h1 id="final-title">Final transcript</h1>
+          <p>Review your corrected text before saving it.</p>
+        </div>
+        <div class="context-strip"><span id="final-file-name">No audio selected</span><span id="final-language">Hindi · hi-IN</span><span id="final-saved-at">Not saved yet</span></div>
+        <div class="final-card">
+          <div class="card-heading"><div><span class="label">Final reviewed transcription</span><small>Your latest manual edits</small></div><span class="final-script">हिन्दी</span></div>
+          <div id="final-text" class="final-text" tabindex="0"></div>
+        </div>
+        <details class="comparison"><summary>Show original raw transcription</summary><div id="comparison-text" class="comparison-text"></div></details>
+        <p id="save-message" class="message is-hidden" role="status"></p>
+        <div class="page-footer-actions split">
+          <button class="secondary-button" data-back="edit" type="button">← Back to editing</button>
+          <div class="action-group"><button id="save-button" class="primary-button" type="button">Save transcript <span aria-hidden="true">↓</span></button><button id="new-button" class="secondary-button is-hidden" type="button">Start a new transcription</button></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer"><span>Virasya · words carried forward</span><span>Local workspace</span></footer>
+  </div>
+
+  <dialog id="confirm-dialog" class="confirm-dialog">
+    <form method="dialog"><p class="eyebrow">Transcribe again?</p><h2>A new request may use provider credits.</h2><p>Your current raw and reviewed text will be kept until the new request succeeds.</p><div class="dialog-actions"><button value="cancel" class="secondary-button">Keep current text</button><button value="confirm" class="primary-button">Transcribe again</button></div></form>
+  </dialog>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

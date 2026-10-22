@@ -1,0 +1,39 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Virtual environments
+.venv/
+.phase0-venv/
+.phase0-clean/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local runtime data
+virasya-ai/data/
+virasya-ai/*.pcm
+virasya-ai/transcript.txt
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
