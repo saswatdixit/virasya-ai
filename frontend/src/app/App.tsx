@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 // @ts-ignore
 import { initThreeScene } from "../three/main.js";
 import { setupVirasyaBranding } from "../branding";
@@ -11,34 +11,115 @@ import Closing from "../sections/Closing/Closing";
 import Dialogs from "../components/shared/Dialogs";
 import PreserveApp from "../preserve/PreserveApp";
 import ExplorePage from "../explore/ExplorePage";
+import { AuthProvider, AuthModal, useAuth } from "../auth";
+import ErrorBoundary from "../components/shared/ErrorBoundary";
 
-const placeholderRoutes = new Set([
-  "/search",
-  "/culture-hosts",
-  "/private-vault",
-  "/profile",
-]);
+const PLACEHOLDER_CONFIGS: Record<
+  string,
+  { eyebrow: string; title: string; desc: string; icon: string }
+> = {
+  "/search": {
+    eyebrow: "Sovereign Search",
+    title: "Search the Living Archive",
+    desc: "Search across preserved oral histories, folklore recordings, and dialect lexicons.",
+    icon: "🔍",
+  },
+  "/culture-hosts": {
+    eyebrow: "Living Heritage Custodians",
+    title: "Culture Hosts & Guilds",
+    desc: "Connect with native cultural custodians, storytellers, and community archives.",
+    icon: "🏛",
+  },
+  "/private-vault": {
+    eyebrow: "Encrypted Provenance",
+    title: "Private Sovereign Vault",
+    desc: "Your family's private audio recordings, restricted memories, and lineage archives.",
+    icon: "🔒",
+  },
+};
 
-function PlaceholderPage() {
+function PlaceholderPage({ path }: { path: string }) {
+  const config = PLACEHOLDER_CONFIGS[path] || {
+    eyebrow: "Archive Preservation",
+    title: "Living Archive Section",
+    desc: "This heritage preservation area is currently being prepared for sovereign archival storage.",
+    icon: "📜",
+  };
+
   return (
     <>
       <a className="skip" href="#main">
         Skip to content
       </a>
       <Header placeholder />
-      <main
-        id="main"
-        className="placeholder-page"
-        aria-label="Virasya page placeholder"
-      />
+      <main id="main" className="placeholder-view-section">
+        <div className="placeholder-card">
+          <div className="placeholder-icon">{config.icon}</div>
+          <div className="placeholder-eyebrow">{config.eyebrow}</div>
+          <h1 className="placeholder-title">{config.title}</h1>
+          <p className="placeholder-desc">{config.desc}</p>
+          <div className="placeholder-buttons">
+            <a
+              href="/"
+              className="p-btn p-btn-ghost p-btn-sm"
+              style={{
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "10px 18px",
+                borderRadius: 8,
+                border: "1px solid rgba(201,166,107,.4)",
+                color: "#C9A66B",
+              }}
+            >
+              ← Back to Home
+            </a>
+            <a
+              href="/explore"
+              className="p-btn p-btn-ghost p-btn-sm"
+              style={{
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "10px 18px",
+                borderRadius: 8,
+                border: "1px solid rgba(240,228,208,.2)",
+                color: "#F0E4D0",
+              }}
+            >
+              Explore Stories
+            </a>
+            <a
+              href="/preserve-your-story"
+              className="p-btn p-btn-brass p-btn-sm"
+              style={{
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "10px 18px",
+                borderRadius: 8,
+                background: "#B85D32",
+                color: "#FFF",
+              }}
+            >
+              Preserve a Story →
+            </a>
+          </div>
+        </div>
+      </main>
     </>
   );
 }
 
-export default function App() {
+function AppContent() {
   const [currentPath, setCurrentPath] = useState(() =>
     window.location.pathname.replace(/\/+$/, "") || "/"
   );
+  const { openAuthModal, authModalOpen } = useAuth();
+  const openedForRouteRef = useRef(false);
 
   useEffect(() => {
     const handleLocationChange = () => {
@@ -48,51 +129,92 @@ export default function App() {
     return () => window.removeEventListener("popstate", handleLocationChange);
   }, []);
 
+  const isLoginOrProfileRoute =
+    currentPath === "/login" || currentPath === "/profile" || currentPath === "/signup";
+
+  // When /login, /profile, or /signup is loaded directly, open the authentic AuthModal
+  useEffect(() => {
+    if (isLoginOrProfileRoute && !openedForRouteRef.current) {
+      openedForRouteRef.current = true;
+      openAuthModal();
+    }
+  }, [isLoginOrProfileRoute, openAuthModal]);
+
+  // Clean up URL to "/" when modal closes if opened from a login/profile/signup route
+  useEffect(() => {
+    if (!authModalOpen && openedForRouteRef.current) {
+      openedForRouteRef.current = false;
+      const path = window.location.pathname.replace(/\/+$/, "");
+      if (path === "/login" || path === "/profile" || path === "/signup") {
+        window.history.pushState(null, "", "/");
+        setCurrentPath("/");
+      }
+    }
+  }, [authModalOpen]);
+
   const isPreserveRoute = currentPath.startsWith("/preserve-your-story");
   const isExploreRoute = currentPath === "/explore";
-  const isPlaceholder = placeholderRoutes.has(currentPath);
+  const isPlaceholder = currentPath in PLACEHOLDER_CONFIGS;
+
+  const isHomeRoute =
+    !isPreserveRoute &&
+    !isExploreRoute &&
+    !isPlaceholder;
 
   useEffect(() => {
-    if (!isPlaceholder && !isPreserveRoute && !isExploreRoute) {
+    if (isHomeRoute) {
       initThreeScene();
     }
     return setupVirasyaBranding();
-  }, [isPlaceholder, isPreserveRoute, isExploreRoute]);
+  }, [isHomeRoute]);
 
-  // If user navigated to Explore
-  if (isExploreRoute) {
-    return <ExplorePage />;
-  }
+  const renderContent = () => {
+    // 1. Explore Page
+    if (isExploreRoute) {
+      return <ExplorePage />;
+    }
 
-  // If user navigated to any of the 5 Preserve Your Story routes
-  if (isPreserveRoute) {
-    return <PreserveApp />;
-  }
+    // 2. Preserve Workflow (Steps 1-6)
+    if (isPreserveRoute) {
+      return <PreserveApp />;
+    }
 
-  // If placeholder route
-  if (isPlaceholder) {
-    return <PlaceholderPage />;
-  }
+    // 3. Configured Placeholders (Search, Vault, Hosts)
+    if (isPlaceholder) {
+      return <PlaceholderPage path={currentPath} />;
+    }
 
-  // Home Page (unchanged)
+    // 4. Home Landing Page (also rendered behind the auth modal if navigating directly to /login or /profile)
+    return (
+      <>
+        <a className="skip" href="#main">
+          Skip to content
+        </a>
+        <div className="scroll-progress" aria-hidden="true"></div>
+        <Header />
+        <main id="main">
+          <Hero />
+          <Integrations />
+          <Trust />
+          <Faq />
+          <Closing />
+        </main>
+        <button className="back-top" aria-label="Back to top">
+          ↑
+        </button>
+        <Dialogs />
+      </>
+    );
+  };
+
+  return <ErrorBoundary>{renderContent()}</ErrorBoundary>;
+}
+
+export default function App() {
   return (
-    <>
-      <a className="skip" href="#main">
-        Skip to content
-      </a>
-      <div className="scroll-progress" aria-hidden="true"></div>
-      <Header />
-      <main id="main">
-        <Hero />
-        <Integrations />
-        <Trust />
-        <Faq />
-        <Closing />
-      </main>
-      <button className="back-top" aria-label="Back to top">
-        ↑
-      </button>
-      <Dialogs />
-    </>
+    <AuthProvider>
+      <AppContent />
+      <AuthModal />
+    </AuthProvider>
   );
 }

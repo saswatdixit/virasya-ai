@@ -60,8 +60,8 @@ for (const rule of expectedRules) {
   console.log(`   ✓ .gitignore contains: ${rule}`);
 }
 
-// 5. Test direct HTTP routing against running Vite server
-console.log("\n5. Testing direct route resolution on port 5173...");
+// 5. Test direct HTTP routing against Vite server or local dist server
+console.log("\n5. Testing direct route resolution...");
 const routesToTest = [
   "/",
   "/preserve-your-story",
@@ -71,12 +71,41 @@ const routesToTest = [
   "/preserve-your-story/punctuation",
   "/preserve-your-story/final-review",
   "/explore",
+  "/login",
+  "/profile",
   "/maps/india-states.geo.json"
 ];
 
-function fetchRoute(route) {
+function createStaticSpaServer(distDir) {
+  return http.createServer((req, res) => {
+    const parsedUrl = new URL(req.url, "http://localhost");
+    let pathname = parsedUrl.pathname;
+    let filePath = path.join(distDir, pathname);
+    
+    // Check if directly points to public map file
+    if (pathname.startsWith("/maps/")) {
+      const publicMapPath = path.resolve(__dirname, "../public", pathname.slice(1));
+      if (fs.existsSync(publicMapPath)) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        fs.createReadStream(publicMapPath).pipe(res);
+        return;
+      }
+    }
+
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      res.writeHead(200);
+      fs.createReadStream(filePath).pipe(res);
+    } else {
+      // SPA fallback
+      res.writeHead(200, { "Content-Type": "text/html" });
+      fs.createReadStream(path.join(distDir, "index.html")).pipe(res);
+    }
+  });
+}
+
+function fetchRoute(port, route) {
   return new Promise((resolve, reject) => {
-    http.get(`http://127.0.0.1:5173${route}`, (res) => {
+    http.get(`http://127.0.0.1:${port}${route}`, (res) => {
       let data = "";
       res.on("data", chunk => data += chunk);
       res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, length: data.length }));
@@ -85,16 +114,31 @@ function fetchRoute(route) {
 }
 
 (async () => {
-  for (const route of routesToTest) {
-    try {
-      const res = await fetchRoute(route);
-      assert.strictEqual(res.status, 200, `Route ${route} returned status ${res.status}`);
-      console.log(`   ✓ ${route.padEnd(36)} -> HTTP ${res.status} (${res.length} bytes)`);
-    } catch (e) {
-      console.error(`   ✗ Route ${route} failed: ${e.message}`);
-      process.exit(1);
-    }
+  let server = null;
+  let port = 5173;
+
+  try {
+    await fetchRoute(5173, "/");
+    console.log("   (Using running dev server on port 5173)");
+  } catch {
+    // Start ephemeral server on random free port
+    server = createStaticSpaServer(distPath);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    port = server.address().port;
+    console.log(`   (Using ephemeral static SPA server on port ${port})`);
   }
 
-  console.log("\n=== SUCCESS: All frontend Vercel readiness checks passed! ===");
+  try {
+    for (const route of routesToTest) {
+      const res = await fetchRoute(port, route);
+      assert.strictEqual(res.status, 200, `Route ${route} returned status ${res.status}`);
+      console.log(`   ✓ ${route.padEnd(36)} -> HTTP ${res.status} (${res.length} bytes)`);
+    }
+
+    console.log("\n=== SUCCESS: All frontend Vercel readiness checks passed! ===");
+  } finally {
+    if (server) {
+      server.close();
+    }
+  }
 })();

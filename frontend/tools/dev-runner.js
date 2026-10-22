@@ -8,6 +8,7 @@ import { createServer } from "vite";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, "..");
+const REPO_ROOT = path.resolve(ROOT_DIR, "..");
 
 // ANSI color helpers
 const colors = {
@@ -32,11 +33,16 @@ function logError(msg) {
 // 1. Locate Python executable in virasya-ai virtual environment
 function getPythonPath() {
   const isWin = process.platform === "win32";
-  const venvPythonWin = path.join(ROOT_DIR, "virasya-ai", ".venv", "Scripts", "python.exe");
-  const venvPythonUnix = path.join(ROOT_DIR, "virasya-ai", ".venv", "bin", "python");
+  const candidates = [
+    path.join(REPO_ROOT, "virasya-ai", ".venv", "Scripts", "python.exe"),
+    path.join(REPO_ROOT, "virasya-ai", ".venv", "bin", "python"),
+    path.join(ROOT_DIR, "virasya-ai", ".venv", "Scripts", "python.exe"),
+    path.join(ROOT_DIR, "virasya-ai", ".venv", "bin", "python"),
+  ];
 
-  if (fs.existsSync(venvPythonWin)) return venvPythonWin;
-  if (fs.existsSync(venvPythonUnix)) return venvPythonUnix;
+  for (const cand of candidates) {
+    if (fs.existsSync(cand)) return cand;
+  }
 
   // Fallback to system python
   logDev("Virtual environment python not found at virasya-ai/.venv, falling back to system 'python'", colors.yellow);
@@ -170,14 +176,17 @@ async function main() {
   console.log(`${colors.cyan}══════════════════════════════════════════════════════════════${colors.reset}\n`);
 
   const pythonBin = getPythonPath();
-  const flaskAppPath = path.join(ROOT_DIR, "virasya-ai", "src", "virasya_ai", "workbench", "app.py");
+  const serverModule = "virasya_ai.web.server";
+  const virasyaAiDir = fs.existsSync(path.join(REPO_ROOT, "virasya-ai"))
+    ? path.join(REPO_ROOT, "virasya-ai")
+    : path.join(ROOT_DIR, "virasya-ai");
 
-  // Clean stale listeners on port 5000 and start managed Flask process
+  // Clean stale listeners on port 5000 and start managed Flask/HTTP process
   checkAndCleanPort(5000);
 
-  logDev(`Starting Flask backend: ${pythonBin} ${flaskAppPath}`, colors.cyan);
-  flaskProc = spawn(pythonBin, [flaskAppPath], {
-    cwd: ROOT_DIR,
+  logDev(`Starting Virasya AI backend: ${pythonBin} -m ${serverModule}`, colors.cyan);
+  flaskProc = spawn(pythonBin, ["-m", serverModule], {
+    cwd: virasyaAiDir,
     env: {
       ...process.env,
       PYTHONUNBUFFERED: "1",

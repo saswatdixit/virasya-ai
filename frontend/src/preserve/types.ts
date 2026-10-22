@@ -24,6 +24,9 @@ export interface ModelTranscript {
   text?: string;
   model?: string;
   provider?: string;
+  language?: string;
+  requestedLanguage?: string;
+  providerLanguage?: string;
   inferenceSeconds?: number;
   durationSeconds?: number;
   error?: string | null;
@@ -76,6 +79,7 @@ export interface PreserveState {
   audio: AudioItem | null;
   tx: {
     forAudio: string;
+    gnani?: ModelTranscript;
     vaani: ModelTranscript;
     conformer: ModelTranscript;
   };
@@ -86,7 +90,7 @@ export interface PreserveState {
   };
   ed: {
     text: string;
-    loadedFrom: 'vaani' | 'conformer' | 'enhanced' | 'written' | 'draft' | null;
+    loadedFrom: 'gnani' | 'vaani' | 'conformer' | 'enhanced' | 'written' | 'draft' | null;
     baseText: string;
     drafts: TranscriptDraftSnapshot[];
     notice: string;

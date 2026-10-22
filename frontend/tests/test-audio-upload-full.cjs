@@ -5,8 +5,12 @@ const path = require('path');
 async function main() {
   console.log("=== Testing Real Audio Upload & Playback via Vite Proxy (Port 5173 -> 5000) ===");
   
-  const sampleAudioPath = path.resolve(__dirname, "../virasya-ai/data/input/Odia6.ogg");
-  if (!fs.existsSync(sampleAudioPath)) {
+  const candidates = [
+    path.resolve(__dirname, "../../virasya-ai/data/input/Odia6.ogg"),
+    path.resolve(__dirname, "../virasya-ai/data/input/Odia6.ogg"),
+  ];
+  let sampleAudioPath = candidates.find(p => fs.existsSync(p));
+  if (!sampleAudioPath) {
     console.error("Audio sample Odia6.ogg not found!");
     process.exit(1);
   }

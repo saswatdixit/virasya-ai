@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useAuth } from "../../auth";
 
 const SearchIcon = () => (
   <svg
@@ -31,6 +32,7 @@ export default function Header({
 }: {
   placeholder?: boolean;
 }) {
+  const { user, openAuthModal } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -103,13 +105,16 @@ export default function Header({
               ↗
             </span>
           </a>
-          <a
+          <button
+            type="button"
             className="nav-icon-btn nav-profile"
-            href="/profile"
-            aria-label="Profile"
+            onClick={openAuthModal}
+            aria-label={user?.email ? `Archivist profile (${user.email})` : "Sign in or view profile"}
+            title={user?.email ? `Signed in as ${user.email}` : "Sign in or view profile"}
           >
             <ProfileIcon />
-          </a>
+            {user && <span className="nav-profile-active-dot" aria-hidden="true" />}
+          </button>
           <button
             className="menu-button"
             aria-label="Toggle navigation menu"
@@ -142,13 +147,18 @@ export default function Header({
         <a href="/private-vault" onClick={() => setMobileOpen(false)}>
           Private Vault
         </a>
-        <a
+        <button
+          type="button"
           className="mobile-menu-action mobile-profile"
-          href="/profile"
-          onClick={() => setMobileOpen(false)}
+          onClick={() => {
+            setMobileOpen(false);
+            openAuthModal();
+          }}
+          aria-label={user?.email ? `Archivist profile (${user.email})` : "Sign In"}
         >
-          <ProfileIcon /> Profile
-        </a>
+          <ProfileIcon /> {user?.email ? user.email.split("@")[0] : "Profile"}
+          {user && <span className="mobile-profile-active-dot" aria-hidden="true"> •</span>}
+        </button>
         <a
           className="btn mobile-preserve"
           href="/preserve-your-story"

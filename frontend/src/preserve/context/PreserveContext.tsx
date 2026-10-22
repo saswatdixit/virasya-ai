@@ -15,6 +15,7 @@ import type {
   AudioItem,
   VocabularyEntry,
   TranscriptDraftSnapshot,
+  ModelTranscript,
 } from "../types";
 import {
   INITIAL_SAMPLE_STORY,
@@ -55,6 +56,7 @@ const INITIAL_STATE: PreserveState = {
   audio: null,
   tx: {
     forAudio: "",
+    gnani: { status: "idle", p: 0, text: "", model: "Gnani Prisma STT v2.5", provider: "Gnani.ai" },
     vaani: { status: "idle", p: 0, text: "" },
     conformer: { status: "idle", p: 0, text: "" },
   },
@@ -101,6 +103,10 @@ interface PreserveContextType {
   isTranscribing: boolean;
   transcriptionPhase: "idle" | "checking" | "warming" | "transcribing" | "error" | "done";
   transcriptionError: string | null;
+  selectedLanguage: string;
+  setSelectedLanguage: (lang: string) => void;
+  isLanguageConfirmed: boolean;
+  setIsLanguageConfirmed: (confirmed: boolean) => void;
   clearTranscriptionError: () => void;
   retryTranscription: () => Promise<void>;
   setLeaveModalOpen: (open: boolean) => void;
@@ -111,20 +117,21 @@ interface PreserveContextType {
   fillSampleStory: () => void;
   setAudio: (audio: AudioItem | null) => void;
   startTranscription: () => Promise<void>;
-  executeTranscription: (model?: "both" | "vaani" | "conformer") => Promise<{
+  executeTranscription: (langOrModel?: string) => Promise<{
     success: boolean;
+    gnaniDone?: boolean;
     vaaniDone: boolean;
     conformerDone: boolean;
     error?: string;
   }>;
   continueWithWrittenOnly: () => void;
   loadSampleTranscript: () => void;
-  retryModel: (model: "vaani" | "conformer") => void;
+  retryModel: (model: "vaani" | "conformer" | "gnani") => void;
   setEnhDecision: (id: string, decision: "accepted" | "rejected" | undefined) => void;
   acceptAllLowRiskEnh: () => void;
   setEnhBase: (base: "vaani" | "conformer") => void;
   triggerEnhancement: () => void;
-  loadSourceIntoEditor: (source: "vaani" | "conformer" | "enhanced" | "written") => void;
+  loadSourceIntoEditor: (source: "gnani" | "vaani" | "conformer" | "enhanced" | "written") => void;
   updateWorkingText: (text: string) => void;
   restoreSnapshot: (snap: TranscriptDraftSnapshot) => void;
   undoWorkingText: () => void;
@@ -313,6 +320,8 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     "idle" | "checking" | "warming" | "transcribing" | "error" | "done"
   >("idle");
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("hi-IN");
+  const [isLanguageConfirmed, setIsLanguageConfirmed] = useState<boolean>(false);
 
   const clearTranscriptionError = useCallback(() => {
     setTranscriptionError(null);
@@ -321,6 +330,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   const setAudio = useCallback((audio: AudioItem | null) => {
     setTranscriptionError(null);
     setTranscriptionPhase("idle");
+    setIsLanguageConfirmed(false); // Revalidate/reset language confirmation when recording changes
     setState((s) => {
       if (s.audio && s.audio.url && audio && audio.url !== s.audio.url) {
         try {
@@ -342,16 +352,10 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   });
 
   const executeTranscription = useCallback(
-    async (modelToRun: "both" | "vaani" | "conformer" = "both") => {
+    async (lang: string = selectedLanguage) => {
       // In-flight guard: prevent concurrent requests thrashing the backend
-      if (modelToRun === "both" && (transcribingRef.current.vaani || transcribingRef.current.conformer)) {
+      if (transcribingRef.current.vaani || transcribingRef.current.conformer) {
         return { success: false, vaaniDone: false, conformerDone: false, error: "Transcription already in progress" };
-      }
-      if (modelToRun === "vaani" && transcribingRef.current.vaani) {
-        return { success: false, vaaniDone: false, conformerDone: false, error: "Vaani transcription already in progress" };
-      }
-      if (modelToRun === "conformer" && transcribingRef.current.conformer) {
-        return { success: false, vaaniDone: false, conformerDone: false, error: "IndicConformer transcription already in progress" };
       }
 
       // Synchronously resolve current audio from state reference
@@ -363,8 +367,8 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         return { success: false, vaaniDone: false, conformerDone: false, error: noAudioMsg };
       }
 
-      if (modelToRun === "both" || modelToRun === "vaani") transcribingRef.current.vaani = true;
-      if (modelToRun === "both" || modelToRun === "conformer") transcribingRef.current.conformer = true;
+      transcribingRef.current.vaani = true;
+      transcribingRef.current.conformer = true;
 
       // Set clean in-flight state without displaying false error
       setState((s) => ({
@@ -372,90 +376,56 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         tx: {
           ...s.tx,
           forAudio: audioName,
-          vaani:
-            modelToRun === "conformer"
-              ? s.tx.vaani
-              : { ...s.tx.vaani, status: "processing", p: 45, error: null },
-          conformer:
-            modelToRun === "vaani"
-              ? s.tx.conformer
-              : { ...s.tx.conformer, status: "processing", p: 45, error: null },
+          gnani: { ...s.tx.gnani, status: "processing", p: 45, error: null },
+          vaani: { ...s.tx.vaani, status: "processing", p: 45, error: null },
+          conformer: { ...s.tx.conformer, status: "idle", p: 0, error: null },
         },
       }));
 
       try {
-        const modelArg = modelToRun === "conformer" ? "indicconformer" : modelToRun;
-        const res = await transcribeAudioOnBackend(audioName, modelArg, stateRef.current.storyId);
+        const res = await transcribeAudioOnBackend(audioName, lang, stateRef.current.storyId);
 
-        const vResult = res.results?.vaani;
-        const iResult = res.results?.indicconformer;
+        const gResult = res.results?.gnani || res.results?.vaani;
+        const transcriptText = (
+          res.transcript ||
+          res.raw_text ||
+          res.gnani ||
+          res.vaani ||
+          gResult?.text ||
+          ""
+        ).trim();
 
-        const vDone = vResult ? vResult.status === "done" : Boolean(res.vaani);
-        const iDone = iResult ? iResult.status === "done" : Boolean(res.indic);
-        const vError = vResult?.error || null;
-        const iError = iResult?.error || null;
+        const isSuccess = Boolean(transcriptText) || gResult?.status === "done";
+        const errorMsg = gResult?.error || (isSuccess ? null : "Speech recognition returned empty transcript.");
 
-        const vaaniText = (vResult?.text || res.vaani || "").trim();
-        const indicText = (iResult?.text || res.indic || "").trim();
+        const modelItem: ModelTranscript = {
+          status: isSuccess ? "done" : "error",
+          p: isSuccess ? 100 : 0,
+          text: transcriptText,
+          model: gResult?.model || res.model || "Gnani Prisma STT v2.5",
+          provider: gResult?.provider || res.provider || "Gnani Prisma",
+          language: res.language || lang,
+          requestedLanguage: res.requested_language || (lang.startsWith("hi") ? "Hindi" : lang),
+          providerLanguage: res.provider_language || "hi",
+          inferenceSeconds: gResult?.inference_seconds || res.inference_seconds,
+          durationSeconds: gResult?.duration_seconds,
+          error: errorMsg,
+        };
 
         setState((s) => {
-          const nextTx = { ...s.tx, forAudio: audioName };
+          const nextTx = {
+            ...s.tx,
+            forAudio: audioName,
+            gnani: modelItem,
+            vaani: modelItem,
+            conformer: { status: "idle" as const, p: 0, text: "", error: null },
+          };
 
-          if (vResult) {
-            nextTx.vaani = {
-              status: vResult.status,
-              p: vDone ? 100 : 0,
-              text: vaaniText,
-              model: vResult.model,
-              provider: vResult.provider,
-              inferenceSeconds: vResult.inference_seconds,
-              durationSeconds: vResult.duration_seconds,
-              error: vError,
-            };
-          } else if (res.vaani && (modelToRun === "both" || modelToRun === "vaani")) {
-            nextTx.vaani = {
-              status: "done",
-              p: 100,
-              text: res.vaani,
-              error: null,
-            };
-          }
-
-          if (iResult) {
-            nextTx.conformer = {
-              status: iResult.status,
-              p: iDone ? 100 : 0,
-              text: indicText,
-              model: iResult.model,
-              provider: iResult.provider,
-              inferenceSeconds: iResult.inference_seconds,
-              durationSeconds: iResult.duration_seconds,
-              error: iError,
-            };
-          } else if (res.indic && (modelToRun === "both" || modelToRun === "conformer")) {
-            nextTx.conformer = {
-              status: "done",
-              p: 100,
-              text: res.indic,
-              error: null,
-            };
-          }
-
-          // If working editor has no text yet, initialize with first successful text
+          // If working editor has no text yet, initialize with Gnani transcript
           let nextEd = s.ed;
-          if (!s.ed.text) {
-            const initialText =
-              (vDone ? vaaniText : "") ||
-              (iDone ? indicText : "") ||
-              s.form.story ||
-              "";
-            const initialSource = (vDone && vaaniText)
-              ? "vaani"
-              : (iDone && indicText)
-              ? "conformer"
-              : s.form.story
-              ? "written"
-              : null;
+          if (!s.ed.text || s.ed.loadedFrom === "gnani" || s.ed.loadedFrom === "vaani") {
+            const initialText = transcriptText || s.form.story || "";
+            const initialSource = transcriptText ? ("gnani" as const) : s.form.story ? ("written" as const) : null;
             if (initialText) {
               nextEd = {
                 ...s.ed,
@@ -474,16 +444,12 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
           };
         });
 
-        const atLeastOne =
-          (modelToRun === "vaani" && vDone) ||
-          (modelToRun === "conformer" && iDone) ||
-          (modelToRun === "both" && (vDone || iDone));
-
         return {
-          success: atLeastOne,
-          vaaniDone: vDone,
-          conformerDone: iDone,
-          error: !atLeastOne ? (vError || iError || "ASR transcription failed.") : undefined,
+          success: isSuccess,
+          gnaniDone: isSuccess,
+          vaaniDone: isSuccess,
+          conformerDone: false,
+          error: isSuccess ? undefined : (errorMsg || "ASR transcription failed."),
         };
       } catch (err: any) {
         const errorMsg = err.message || "Failed to run transcription.";
@@ -492,38 +458,34 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
           tx: {
             ...s.tx,
             forAudio: audioName,
-            vaani:
-              modelToRun === "conformer"
-                ? s.tx.vaani
-                : {
-                    ...s.tx.vaani,
-                    status: "error",
-                    p: 0,
-                    error: errorMsg,
-                  },
-            conformer:
-              modelToRun === "vaani"
-                ? s.tx.conformer
-                : {
-                    ...s.tx.conformer,
-                    status: "error",
-                    p: 0,
-                    error: errorMsg,
-                  },
+            gnani: {
+              status: "error",
+              p: 0,
+              text: "",
+              error: errorMsg,
+            },
+            vaani: {
+              ...s.tx.vaani,
+              status: "error",
+              p: 0,
+              error: errorMsg,
+            },
+            conformer: s.tx.conformer,
           },
         }));
         return {
           success: false,
+          gnaniDone: false,
           vaaniDone: false,
           conformerDone: false,
           error: errorMsg,
         };
       } finally {
-        if (modelToRun === "both" || modelToRun === "vaani") transcribingRef.current.vaani = false;
-        if (modelToRun === "both" || modelToRun === "conformer") transcribingRef.current.conformer = false;
+        transcribingRef.current.vaani = false;
+        transcribingRef.current.conformer = false;
       }
     },
-    []
+    [selectedLanguage]
   );
 
   const startTranscription = useCallback(async () => {
@@ -540,13 +502,18 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    if (!isLanguageConfirmed) {
+      setTranscriptionError("Please confirm the audio recording language (Hindi) before transcribing.");
+      return;
+    }
+
     setTranscriptionError(null);
 
     // If backend is not configured (e.g. static preview deployment), provide immediate helpful guidance
     if (!isBackendConfigured()) {
       setTranscriptionPhase("idle");
       setTranscriptionError(
-        "Speech recognition models require the Virasya AI backend. You can load a sample Odia transcript below to preview the review workflow, or continue with your written story."
+        "Speech recognition models require the Virasya AI backend. You can load a sample transcript below to preview the review workflow, or continue with your written story."
       );
       return;
     }
@@ -557,6 +524,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     try {
       const statusRes = await fetchModelStatus();
       if (
+        statusRes.gnani?.status === "loading" ||
         statusRes.vaani.status === "loading" ||
         statusRes.indicconformer.status === "loading" ||
         statusRes.busy
@@ -570,7 +538,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const res = await executeTranscription("both");
+      const res = await executeTranscription(selectedLanguage);
 
       if (res.success) {
         setTranscriptionPhase("done");
@@ -590,37 +558,35 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         unexpectedErr?.message || "An unexpected error occurred during transcription. Please try again."
       );
     }
-  }, [transcriptionPhase, executeTranscription, goToStep]);
+  }, [transcriptionPhase, isLanguageConfirmed, selectedLanguage, executeTranscription, goToStep]);
 
   const retryTranscription = useCallback(async () => {
     await startTranscription();
   }, [startTranscription]);
 
   const loadSampleTranscript = useCallback(() => {
+    const sampleItem: ModelTranscript = {
+      status: "done",
+      p: 100,
+      text: DEMO_TRANSCRIPTS.vaani,
+      model: "Gnani Prisma STT v2.5 (Sample)",
+      provider: "Gnani Prisma (Demo Content)",
+      inferenceSeconds: 1.82,
+      durationSeconds: 47.59,
+      error: null,
+    };
     setState((s) => ({
       ...s,
       isSampleTranscript: true,
       completed: { ...s.completed, 2: true },
       tx: {
         forAudio: s.audio?.name || "sample_recording_odia.ogg",
-        vaani: {
-          status: "done",
-          p: 100,
-          text: DEMO_TRANSCRIPTS.vaani,
-          model: "OpenVoiceOS/artpark-iisc-vaani-fastconformer-or-onnx (Sample)",
-          provider: "Vaani (Demo Content)",
-          inferenceSeconds: 3.05,
-          durationSeconds: 47.59,
-          error: null,
-        },
+        gnani: sampleItem,
+        vaani: sampleItem,
         conformer: {
-          status: "done",
-          p: 100,
-          text: DEMO_TRANSCRIPTS.conformer,
-          model: "OpenVoiceOS/ai4bharat-indicconformer-or-onnx (Sample)",
-          provider: "AI4Bharat (Demo Content)",
-          inferenceSeconds: 3.51,
-          durationSeconds: 47.59,
+          status: "idle",
+          p: 0,
+          text: "",
           error: null,
         },
       },
@@ -628,7 +594,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         ...s.ed,
         text: DEMO_TRANSCRIPTS.vaani,
         baseText: DEMO_TRANSCRIPTS.vaani,
-        loadedFrom: "vaani",
+        loadedFrom: "gnani",
         notice: "Loaded sample Odia transcript (demo mode).",
       },
       vocab: s.vocab.length > 0 ? s.vocab : INITIAL_SAMPLE_VOCAB,
@@ -655,7 +621,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   }, [goToStep]);
 
   const retryModel = useCallback(
-    (model: "vaani" | "conformer") => {
+    (model: "vaani" | "conformer" | "gnani" = "gnani") => {
       executeTranscription(model);
     },
     [executeTranscription]
@@ -692,13 +658,14 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadSourceIntoEditor = useCallback(
-    (source: "vaani" | "conformer" | "enhanced" | "written") => {
+    (source: "gnani" | "vaani" | "conformer" | "enhanced" | "written") => {
       setState((s) => {
         let textToLoad = "";
-        if (source === "vaani") textToLoad = s.tx.vaani.text || "";
+        if (source === "gnani") textToLoad = s.tx.gnani?.text || s.tx.vaani.text || "";
+        else if (source === "vaani") textToLoad = s.tx.vaani.text || s.tx.gnani?.text || "";
         else if (source === "conformer") textToLoad = s.tx.conformer.text || "";
         else if (source === "written") textToLoad = s.form.story || "";
-        else if (source === "enhanced") textToLoad = s.tx.vaani.text || s.form.story || "";
+        else if (source === "enhanced") textToLoad = s.tx.gnani?.text || s.tx.vaani.text || s.form.story || "";
 
         const isDirty = s.ed.text && s.ed.text !== s.ed.baseText;
         const newDrafts = isDirty
@@ -1007,6 +974,10 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         isTranscribing,
         transcriptionPhase,
         transcriptionError,
+        selectedLanguage,
+        setSelectedLanguage,
+        isLanguageConfirmed,
+        setIsLanguageConfirmed,
         clearTranscriptionError,
         retryTranscription,
         setLeaveModalOpen,

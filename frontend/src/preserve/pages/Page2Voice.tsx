@@ -15,6 +15,10 @@ export default function Page2Voice() {
     isTranscribing,
     transcriptionPhase,
     transcriptionError,
+    selectedLanguage,
+    setSelectedLanguage,
+    isLanguageConfirmed,
+    setIsLanguageConfirmed,
     retryTranscription,
   } = usePreserve();
 
@@ -331,12 +335,112 @@ export default function Page2Voice() {
                   <button
                     type="button"
                     className="p-btn-text p-btn-sm"
-                    onClick={() => setReplacing(true)}
+                    onClick={() => {
+                      setReplacing(true);
+                      setIsLanguageConfirmed(false);
+                    }}
                     disabled={isTranscribing}
                   >
                     Replace audio
                   </button>
                 </div>
+
+                {/* Language Selection & Confirmation Card */}
+                {!isTranscribing && (
+                  <div
+                    className="p-language-selection-card"
+                    style={{
+                      marginTop: 18,
+                      padding: "16px 18px",
+                      background: isLanguageConfirmed ? "rgba(46, 125, 50, 0.08)" : "rgba(184, 93, 50, 0.08)",
+                      border: isLanguageConfirmed ? "1px solid rgba(46, 125, 50, 0.35)" : "1px solid rgba(184, 93, 50, 0.3)",
+                      borderRadius: 6,
+                      transition: "all 0.25s ease",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--v-brown)" }}>
+                        Select Audio Language
+                      </span>
+                      <span className="p-status-pill done" style={{ fontSize: 10, padding: "2px 8px" }}>
+                        Gnani Prisma STT v2.5
+                      </span>
+                    </div>
+
+                    <p className="p-small" style={{ margin: "0 0 14px", color: "var(--v-ink)", lineHeight: 1.5 }}>
+                      Gnani Prisma speech recognition requires confirming the language spoken in this recording before transcription begins. Hindi is the active supported language for this phase.
+                    </p>
+
+                    <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+                      <label htmlFor="audio-language-select" style={{ fontSize: 12, fontWeight: 600, color: "var(--v-ink)" }}>
+                        Recording Language:
+                      </label>
+                      <select
+                        id="audio-language-select"
+                        value={selectedLanguage}
+                        onChange={(e) => {
+                          setSelectedLanguage(e.target.value);
+                          setIsLanguageConfirmed(false);
+                        }}
+                        disabled={isTranscribing}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: 6,
+                          border: "1px solid var(--v-line)",
+                          background: "#fff",
+                          color: "var(--v-ink)",
+                          fontSize: 13,
+                          fontWeight: 500,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <option value="hi-IN">Hindi (hi-IN) — Supported</option>
+                        <option value="or" disabled>Odia (Coming in next release)</option>
+                        <option value="bn" disabled>Bengali (Coming in next release)</option>
+                        <option value="ta" disabled>Tamil (Coming in next release)</option>
+                        <option value="te" disabled>Telugu (Coming in next release)</option>
+                      </select>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "10px 14px",
+                        background: isLanguageConfirmed ? "rgba(46, 125, 50, 0.12)" : "#fff",
+                        border: isLanguageConfirmed ? "1px solid rgba(46, 125, 50, 0.4)" : "1px solid var(--v-line)",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                      }}
+                      onClick={() => !isTranscribing && setIsLanguageConfirmed(!isLanguageConfirmed)}
+                    >
+                      <input
+                        type="checkbox"
+                        id="language-confirm-checkbox"
+                        checked={isLanguageConfirmed}
+                        onChange={(e) => setIsLanguageConfirmed(e.target.checked)}
+                        disabled={isTranscribing}
+                        style={{ width: 18, height: 18, accentColor: "#B85D32", cursor: "pointer" }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <label
+                        htmlFor="language-confirm-checkbox"
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 500,
+                          color: isLanguageConfirmed ? "#1e5c26" : "var(--v-ink)",
+                          cursor: "pointer",
+                          userSelect: "none",
+                        }}
+                      >
+                        {isLanguageConfirmed
+                          ? "✓ Confirmed: Audio recording is in Hindi for Gnani Prisma STT"
+                          : "I confirm this audio recording is spoken in Hindi"}
+                      </label>
+                    </div>
+                  </div>
+                )}
 
                 {/* In-Step Transcription Loading State */}
                 {isTranscribing && (
@@ -359,13 +463,13 @@ export default function Page2Voice() {
                     <div style={{ flex: 1 }}>
                       <strong style={{ display: "block", color: "var(--v-brown)", fontSize: 14.5 }}>
                         {transcriptionPhase === "warming" || transcriptionPhase === "checking"
-                          ? "Preparing speech recognition models…"
-                          : "Transcribing your audio recording…"}
+                          ? "Connecting to Gnani Prisma speech service…"
+                          : "Transcribing your audio with Gnani Prisma…"}
                       </strong>
                       <p className="p-small" style={{ margin: "4px 0 0", color: "var(--v-text-sub)", lineHeight: 1.5 }}>
                         {transcriptionPhase === "warming" || transcriptionPhase === "checking"
-                          ? "Initializing local IISc Vaani & AI4Bharat IndicConformer ONNX inference engines. This only takes a few seconds."
-                          : "Running local dual-model speech recognition on CPU. As soon as transcripts are ready, you will proceed to review."}
+                          ? "Verifying Gnani Prisma speech recognition service. This only takes a moment."
+                          : "Running Gnani Prisma speech-to-text recognition. As soon as your transcript is ready, you will proceed to review."}
                       </p>
                     </div>
                   </div>
@@ -598,7 +702,7 @@ export default function Page2Voice() {
             )}
 
             <div className="p-side-note">
-              Audio is processed locally with Vaani & IndicConformer models. No audio is transmitted to external cloud APIs.
+              Audio is transcribed using Gnani Prisma Speech Recognition (STT v2.5) with server-side security. Your authentic recording is stored safely in the archive.
             </div>
           </div>
         </div>
@@ -630,23 +734,26 @@ export default function Page2Voice() {
                   type="button"
                   className="p-btn p-btn-brass"
                   onClick={startTranscription}
-                  disabled={isTranscribing}
+                  disabled={isTranscribing || !isLanguageConfirmed}
                   aria-busy={isTranscribing}
+                  title={!isLanguageConfirmed ? "Confirm audio language above before transcribing" : "Start Gnani speech transcription"}
                 >
                   {isTranscribing ? (
                     <>
                       <span className="p-spinner-sm" aria-hidden="true" style={{ display: "inline-block", width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite", marginRight: 8, verticalAlign: "middle" }} />
-                      {transcriptionPhase === "warming" || transcriptionPhase === "checking"
-                        ? "Preparing speech recognition…"
-                        : "Transcribing your recording…"}
+                      Transcribing in Hindi with Gnani Prisma…
                     </>
                   ) : transcriptionError ? (
                     <>
-                      Retry Transcription <span className="p-ar">↻</span>
+                      Retry Hindi Transcription <span className="p-ar">↻</span>
+                    </>
+                  ) : !isLanguageConfirmed ? (
+                    <>
+                      Confirm Hindi Language Above <span className="p-ar">→</span>
                     </>
                   ) : (
                     <>
-                      Proceed to Transcript Review <span className="p-ar">→</span>
+                      Start Gnani Transcription (Hindi) <span className="p-ar">→</span>
                     </>
                   )}
                 </button>

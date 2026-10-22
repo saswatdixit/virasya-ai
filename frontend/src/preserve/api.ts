@@ -267,25 +267,40 @@ export interface TranscribeResultItem {
 export interface TranscribeResponse {
   status: "success";
   filename: string;
+  provider?: string;
+  model?: string;
+  transcript?: string;
+  raw_text?: string;
+  inference_seconds?: number;
+  language?: string;
+  language_code?: string;
+  requested_language?: string;
+  provider_language?: string;
+  metadata?: Record<string, any>;
   results: {
+    gnani?: TranscribeResultItem;
     vaani?: TranscribeResultItem;
     indicconformer?: TranscribeResultItem;
   };
+  gnani?: string;
   vaani?: string;
   indic?: string;
+  gnani_info?: TranscribeResultItem;
   vaani_info?: TranscribeResultItem;
   indic_info?: TranscribeResultItem;
 }
 
 export async function fetchModelStatus(): Promise<{
+  gnani?: { status: string; error?: string | null; model: string };
   vaani: { status: string; error?: string | null; model: string };
   indicconformer: { status: string; error?: string | null; model: string };
   busy: boolean;
 }> {
   if (!isBackendConfigured()) {
     return {
-      vaani: { status: "preview", error: null, model: "Vaani FastConformer (Local AI)" },
-      indicconformer: { status: "preview", error: null, model: "AI4Bharat IndicConformer (Local AI)" },
+      gnani: { status: "preview", error: null, model: "Gnani Prisma STT v2.5 (Preview)" },
+      vaani: { status: "preview", error: null, model: "Gnani Prisma STT v2.5 (Preview)" },
+      indicconformer: { status: "offline", error: null, model: "AI4Bharat IndicConformer (Offline)" },
       busy: false,
     };
   }
@@ -303,6 +318,7 @@ export interface BackendHealthResponse {
   service: string;
   timestamp: string;
   models: {
+    gnani?: { status: string; error?: string | null; model: string };
     vaani: { status: string; error?: string | null; model: string };
     indicconformer: { status: string; error?: string | null; model: string };
     busy: boolean;
@@ -394,13 +410,13 @@ export async function checkPunctuationCapability(text?: string): Promise<{
 
 export async function transcribeAudioOnBackend(
   filename: string,
-  model: "both" | "vaani" | "indicconformer" = "both",
+  language: string = "hi-IN",
   storyId?: string,
   signal?: AbortSignal
 ): Promise<TranscribeResponse> {
   if (!isBackendConfigured()) {
     throw new Error(
-      "Speech-to-text models (Vaani & IndicConformer) require the Virasya AI backend. You can load a sample Odia transcript to preview the review workflow."
+      "Speech-to-text transcription with Gnani Prisma requires the Virasya AI backend. You can load a sample transcript to preview the review workflow."
     );
   }
 
@@ -410,7 +426,12 @@ export async function transcribeAudioOnBackend(
     res = await fetch(`${base}/api/transcribe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename, model, story_id: storyId }),
+      body: JSON.stringify({
+        filename,
+        language,
+        language_code: language,
+        story_id: storyId,
+      }),
       signal,
     });
   } catch (networkErr: any) {
@@ -424,6 +445,9 @@ export async function transcribeAudioOnBackend(
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     if (errorData.error) throw new Error(errorData.error);
+    if (res.status === 422) {
+      throw new Error(errorData.error || "The selected language is not supported by Gnani Prisma STT.");
+    }
     if (res.status === 502 || res.status === 504) {
       throw new Error(`Backend service unavailable (HTTP ${res.status}). Please ensure the local backend is running.`);
     }

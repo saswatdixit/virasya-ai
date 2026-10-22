@@ -2,7 +2,14 @@ const http = require('http');
 
 function requestJson(url, options = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request(url, options, (res) => {
+    const opts = { ...options };
+    if (opts.body && (!opts.headers || !opts.headers['Content-Length'])) {
+      opts.headers = {
+        ...opts.headers,
+        'Content-Length': Buffer.byteLength(opts.body),
+      };
+    }
+    const req = http.request(url, opts, (res) => {
       let body = '';
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
