@@ -174,7 +174,23 @@ assert(
   "Must reject direct email modifications on profiles"
 );
 
+// Verify explicit least-privilege grants
+assert(
+  sql.includes("REVOKE ALL ON public.profiles FROM anon;") &&
+  sql.includes("REVOKE ALL ON public.profiles FROM authenticated;"),
+  "Must explicitly revoke default wildcard privileges on profiles"
+);
+assert(
+  sql.includes("GRANT INSERT (id, full_name, display_name, avatar_url) ON public.profiles TO authenticated;"),
+  "Must enforce column-restricted insert on profiles"
+);
+assert(
+  sql.includes("GRANT UPDATE (full_name, display_name, avatar_url) ON public.profiles TO authenticated;"),
+  "Must enforce column-restricted update on profiles"
+);
+
 console.log("   ✓ Profile ID, created_at, and email are strictly immutable via client requests.");
+console.log("   ✓ Profile table and column-level grants enforce least privilege.");
 
 // -----------------------------------------------------------------------------
 // 4. Staging Project Reference & Safety Boundaries

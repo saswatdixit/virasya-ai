@@ -654,3 +654,37 @@ CREATE POLICY "private_audio_delete_owner" ON storage.objects
         bucket_id = 'story-recordings-private'
         AND (storage.foldername(name))[1] = auth.uid()::text
     );
+
+-- =============================================================================
+-- 8. LEAST-PRIVILEGE TABLE & COLUMN GRANTS
+-- Enforces explicit privilege boundaries for anon, authenticated, and service_role.
+-- =============================================================================
+
+-- Ensure service_role and postgres retain full management privileges
+GRANT ALL ON public.profiles TO postgres, service_role;
+GRANT ALL ON public.stories TO postgres, service_role;
+GRANT ALL ON public.vocabulary TO postgres, service_role;
+
+-- Revoke all table-level privileges from anonymous visitors
+REVOKE ALL ON public.profiles FROM anon;
+REVOKE ALL ON public.stories FROM anon;
+REVOKE ALL ON public.vocabulary FROM anon;
+
+-- Anonymous visitors only require read access to public preserved stories and vocabulary
+GRANT SELECT ON public.stories TO anon;
+GRANT SELECT ON public.vocabulary TO anon;
+
+-- Authenticated users: explicit least-privilege grants
+-- Profiles: revoke all; grant select and controlled column mutations
+REVOKE ALL ON public.profiles FROM authenticated;
+GRANT SELECT ON public.profiles TO authenticated;
+GRANT INSERT (id, full_name, display_name, avatar_url) ON public.profiles TO authenticated;
+GRANT UPDATE (full_name, display_name, avatar_url) ON public.profiles TO authenticated;
+
+-- Stories: allow standard CRUD under RLS
+REVOKE ALL ON public.stories FROM authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.stories TO authenticated;
+
+-- Vocabulary: allow standard CRUD under RLS
+REVOKE ALL ON public.vocabulary FROM authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.vocabulary TO authenticated;
