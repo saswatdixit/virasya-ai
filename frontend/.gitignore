@@ -1,0 +1,55 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies and Build Output
+node_modules
+dist
+dist-ssr
+
+# Environment Variables & Secrets
+.env
+.env*.local
+*.local
+
+# Python Virtual Environments & Caches
+.venv
+.venv/
+virasya-ai/.venv/
+virasya-ai/**/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+**/.pytest_cache/
+
+# AI Model Weights & Checkpoints (Large Binaries)
+*.onnx
+*.bin
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+
+# Local User Recordings & Generated Story Output
+data/audio/
+data/output/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.opencode/
+

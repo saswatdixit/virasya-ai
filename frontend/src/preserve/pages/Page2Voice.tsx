@@ -1,0 +1,672 @@
+import { useState, useRef, useEffect } from "react";
+import { usePreserve } from "../context/PreserveContext";
+import { formatTime } from "../utils";
+import AudioPlayer from "../components/AudioPlayer";
+import { uploadAudioToBackend } from "../api";
+
+export default function Page2Voice() {
+  const {
+    state,
+    setAudio,
+    startTranscription,
+    continueWithWrittenOnly,
+    loadSampleTranscript,
+    goToStep,
+    isTranscribing,
+    transcriptionPhase,
+    transcriptionError,
+    retryTranscription,
+  } = usePreserve();
+
+  const [mode, setMode] = useState<"record" | "upload">("record");
+  const [recState, setRecState] = useState<"idle" | "requesting" | "recording" | "paused">("idle");
+  const [elapsed, setElapsed] = useState(0);
+  const [err, setErr] = useState("");
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<any>(null);
+  const elapsedRef = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+
+  const audio = state.audio;
+  const hasAudio = !!audio && !replacing;
+  const hasWritten = state.form.story.trim().length > 0;
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      clearInterval(timerRef.current);
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, []);
+
+  const startTimer = () => {
+    clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      elapsedRef.current += 0.25;
+      setElapsed(elapsedRef.current);
+    }, 250);
+  };
+
+  const drawWaveform = () => {
+    if (!analyserRef.current || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const bufferLength = analyserRef.current.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    analyserRef.current.getByteFrequencyData(dataArray);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const barWidth = 3;
+    const barGap = 2;
+    const totalBars = Math.floor(canvas.width / (barWidth + barGap));
+    const step = Math.floor(bufferLength / totalBars);
+
+    for (let i = 0; i < totalBars; i++) {
+      const val = dataArray[i * step] || 0;
+      const barHeight = Math.max(3, (val / 255) * canvas.height);
+      const x = i * (barWidth + barGap);
+      const y = (canvas.height - barHeight) / 2;
+
+      ctx.fillStyle = "#B85D32";
+      ctx.fillRect(x, y, barWidth, barHeight);
+    }
+
+    animFrameRef.current = requestAnimationFrame(drawWaveform);
+  };
+
+  const startRecording = async () => {
+    setErr("");
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      setErr("Microphone recording is not supported in this browser. Please upload an audio file instead.");
+      return;
+    }
+
+    try {
+      setRecState("requesting");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+      elapsedRef.current = 0;
+      setElapsed(0);
+
+      // Web Audio API analyzer
+      try {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 128;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+        drawWaveform();
+      } catch {}
+
+      const mr = new MediaRecorder(stream);
+      mediaRecorderRef.current = mr;
+
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mr.onstop = async () => {
+        clearInterval(timerRef.current);
+        if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+
+        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || "audio/webm" });
+        const ext = mr.mimeType?.includes("ogg") ? "ogg" : "webm";
+        const filename = `recording_${Date.now()}.${ext}`;
+        const file = new File([blob], filename, { type: blob.type });
+
+        setUploading(true);
+        try {
+          const res = await uploadAudioToBackend(file);
+          setAudio({
+            name: res.filename,
+            url: res.url,
+            size: res.size,
+            duration: elapsedRef.current,
+            kind: "recorded",
+          });
+          setReplacing(false);
+          setRecState("idle");
+        } catch (uploadErr: any) {
+          console.warn("Backend upload failed, keeping blob url:", uploadErr);
+          const localUrl = URL.createObjectURL(blob);
+          setAudio({
+            name: filename,
+            url: localUrl,
+            size: blob.size,
+            duration: elapsedRef.current,
+            kind: "recorded",
+          });
+          setReplacing(false);
+          setRecState("idle");
+        } finally {
+          setUploading(false);
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach((t) => t.stop());
+            streamRef.current = null;
+          }
+        }
+      };
+
+      mr.start(250);
+      setRecState("recording");
+      startTimer();
+    } catch {
+      setRecState("idle");
+      setErr("Microphone permission denied or audio device unavailable.");
+    }
+  };
+
+  const pauseResumeRecording = () => {
+    if (!mediaRecorderRef.current) return;
+    if (recState === "recording") {
+      mediaRecorderRef.current.pause();
+      clearInterval(timerRef.current);
+      setRecState("paused");
+    } else if (recState === "paused") {
+      mediaRecorderRef.current.resume();
+      startTimer();
+      setRecState("recording");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && (recState === "recording" || recState === "paused")) {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const handleFileUpload = async (file: File) => {
+    setErr("");
+    if (!file) return;
+
+    if (file.size === 0) {
+      setErr("The selected file is empty (0 bytes). Please select a valid audio file.");
+      return;
+    }
+
+    const MAX_SIZE = 50 * 1024 * 1024; // 50MB
+    if (file.size > MAX_SIZE) {
+      setErr(
+        `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 50 MB limit. Please select a smaller audio file.`
+      );
+      return;
+    }
+
+    const allowed = [".wav", ".ogg", ".mp3", ".flac", ".webm", ".m4a", ".aac"];
+    const ext = "." + file.name.split(".").pop()?.toLowerCase();
+    if (!allowed.includes(ext)) {
+      setErr(`Audio format '${ext}' not supported. Please use MP3, WAV, OGG, M4A, or WebM.`);
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const res = await uploadAudioToBackend(file);
+      // Determine audio duration
+      const audioEl = new Audio();
+      const objectUrl = URL.createObjectURL(file);
+      audioEl.src = objectUrl;
+      audioEl.onloadedmetadata = () => {
+        setAudio({
+          name: res.filename,
+          url: res.url,
+          size: res.size,
+          duration: audioEl.duration || null,
+          kind: "uploaded",
+        });
+        setReplacing(false);
+        setUploading(false);
+        URL.revokeObjectURL(objectUrl);
+      };
+      audioEl.onerror = () => {
+        setAudio({
+          name: res.filename,
+          url: res.url,
+          size: res.size,
+          duration: null,
+          kind: "uploaded",
+        });
+        setReplacing(false);
+        setUploading(false);
+        URL.revokeObjectURL(objectUrl);
+      };
+    } catch (uploadErr: any) {
+      console.warn("Backend upload skipped or unavailable (preview mode):", uploadErr);
+      const audioEl = new Audio();
+      const objectUrl = URL.createObjectURL(file);
+      audioEl.src = objectUrl;
+      const finishLocal = (dur: number | null) => {
+        setAudio({
+          name: file.name,
+          url: objectUrl,
+          size: file.size,
+          duration: dur,
+          kind: "uploaded",
+        });
+        setReplacing(false);
+        setUploading(false);
+      };
+      audioEl.onloadedmetadata = () => finishLocal(audioEl.duration || null);
+      audioEl.onerror = () => finishLocal(null);
+    }
+  };
+
+  return (
+    <div className="p-compact-step">
+      {/* Editorial Header */}
+      <header className="p-compact-header">
+        <div className="p-wrap">
+          <div className="p-header-flex">
+            <div>
+              <div className="p-eyebrow">02 / VOICE & ORAL RECORD</div>
+              <h1 className="p-compact-title" id="page-heading">
+                Let the story be heard.
+              </h1>
+              <p className="p-compact-lede">
+                Record the storyteller’s voice directly, or upload an existing audio file.
+              </p>
+            </div>
+            <div className="p-header-meta">
+              <span className={`p-status-pill ${isTranscribing ? "proc" : hasAudio ? "done" : "skip"}`}>
+                {isTranscribing
+                  ? transcriptionPhase === "warming"
+                    ? "WARMING MODELS"
+                    : "TRANSCRIBING AUDIO"
+                  : hasAudio
+                  ? "AUDIO READY FOR ASR"
+                  : "AWAITING AUDIO"}
+              </span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Workspace */}
+      <div className="p-wrap p-form-workspace">
+        <div className="p-grid-voice">
+          {/* Main Card: Audio Player or Capture */}
+          <div className="p-card-panel">
+            {hasAudio ? (
+              <div>
+                <div className="p-panel-header">
+                  <span className="p-panel-num">✓</span>
+                  <div>
+                    <h2 className="p-panel-title">Attached Audio Recording</h2>
+                    <p className="p-panel-sub">
+                      Saved to local repository: <strong>{audio.name}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-audio-player-box">
+                  <AudioPlayer
+                    audio={audio}
+                    onReplace={() => setReplacing(true)}
+                    onRemove={() => setAudio(null)}
+                  />
+                </div>
+
+                <div className="p-audio-meta-row">
+                  <span className="p-small">
+                    {audio.duration ? `Duration: ${formatTime(audio.duration)}` : "Duration detected"}
+                    {audio.size ? ` · ${(audio.size / 1024 / 1024).toFixed(2)} MB` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="p-btn-text p-btn-sm"
+                    onClick={() => setReplacing(true)}
+                    disabled={isTranscribing}
+                  >
+                    Replace audio
+                  </button>
+                </div>
+
+                {/* In-Step Transcription Loading State */}
+                {isTranscribing && (
+                  <div
+                    className="p-asr-processing-card"
+                    role="status"
+                    aria-live="polite"
+                    style={{
+                      marginTop: 18,
+                      padding: "16px 18px",
+                      background: "rgba(184, 93, 50, 0.08)",
+                      border: "1px solid rgba(184, 93, 50, 0.3)",
+                      borderRadius: 6,
+                      display: "flex",
+                      gap: 14,
+                      alignItems: "center",
+                    }}
+                  >
+                    <div className="p-spinner" style={{ width: 26, height: 26, flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <strong style={{ display: "block", color: "var(--v-brown)", fontSize: 14.5 }}>
+                        {transcriptionPhase === "warming" || transcriptionPhase === "checking"
+                          ? "Preparing speech recognition models…"
+                          : "Transcribing your audio recording…"}
+                      </strong>
+                      <p className="p-small" style={{ margin: "4px 0 0", color: "var(--v-text-sub)", lineHeight: 1.5 }}>
+                        {transcriptionPhase === "warming" || transcriptionPhase === "checking"
+                          ? "Initializing local IISc Vaani & AI4Bharat IndicConformer ONNX inference engines. This only takes a few seconds."
+                          : "Running local dual-model speech recognition on CPU. As soon as transcripts are ready, you will proceed to review."}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* In-Step Real Transcription Error Alert */}
+                {transcriptionError && !isTranscribing && (
+                  <div
+                    className="p-asr-error-card"
+                    role="alert"
+                    style={{
+                      marginTop: 18,
+                      padding: "16px 18px",
+                      background: "rgba(197, 48, 48, 0.08)",
+                      border: "1px solid rgba(197, 48, 48, 0.35)",
+                      borderRadius: 6,
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                      <span style={{ fontSize: 20, lineHeight: 1, color: "var(--v-alert)" }}>⚠️</span>
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ color: "var(--v-alert)", fontSize: 14.5 }}>
+                          Speech recognition encountered an issue
+                        </strong>
+                        <p className="p-small" style={{ margin: "6px 0 12px", color: "var(--v-ink)", lineHeight: 1.5 }}>
+                          {transcriptionError}
+                        </p>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            className="p-btn p-btn-brass p-btn-sm"
+                            onClick={retryTranscription}
+                          >
+                            ↻ Retry Transcription
+                          </button>
+                          <button
+                            type="button"
+                            className="p-btn p-btn-dark p-btn-sm"
+                            onClick={loadSampleTranscript}
+                          >
+                            Preview with Sample Odia Transcript (Demo Content) →
+                          </button>
+                          {hasWritten && (
+                            <button
+                              type="button"
+                              className="p-btn p-btn-ghost p-btn-sm"
+                              onClick={continueWithWrittenOnly}
+                            >
+                              Continue with written story instead
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                {/* Method Switcher Tabs */}
+                <div className="p-tabs-segmented" role="tablist" aria-label="Audio capture method">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={mode === "record"}
+                    className={`p-tab-seg ${mode === "record" ? "is-active" : ""}`}
+                    onClick={() => {
+                      setMode("record");
+                      setErr("");
+                    }}
+                  >
+                    <span className="p-tab-icon">🎙</span> Record with Microphone
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={mode === "upload"}
+                    className={`p-tab-seg ${mode === "upload" ? "is-active" : ""}`}
+                    onClick={() => {
+                      setMode("upload");
+                      setErr("");
+                    }}
+                  >
+                    <span className="p-tab-icon">📁</span> Upload Audio File
+                  </button>
+                </div>
+
+                {/* Option A: Microphone Recorder */}
+                {mode === "record" && (
+                  <div className="p-record-card">
+                    <div className="p-rec-center">
+                      <button
+                        type="button"
+                        className={`p-rec-circle-btn ${recState === "recording" ? "is-recording" : recState === "paused" ? "is-paused" : ""}`}
+                        onClick={recState === "idle" ? startRecording : stopRecording}
+                        disabled={recState === "requesting" || uploading}
+                        aria-label={recState === "idle" ? "Start recording" : "Stop recording"}
+                      >
+                        <span className="p-rec-inner" />
+                      </button>
+
+                      <div className="p-rec-timer">{formatTime(elapsed)}</div>
+
+                      <p className="p-rec-status">
+                        {recState === "idle" && "Click the record button to speak."}
+                        {recState === "requesting" && "Requesting microphone permission…"}
+                        {recState === "recording" && "Recording in progress. Speak naturally in Odia or your native dialect."}
+                        {recState === "paused" && "Recording paused."}
+                        {uploading && "Saving audio to local repository…"}
+                      </p>
+
+                      {recState === "recording" && (
+                        <canvas ref={canvasRef} className="p-rec-canvas" width={320} height={40} />
+                      )}
+
+                      {(recState === "recording" || recState === "paused") && (
+                        <div className="p-rec-actions">
+                          <button
+                            type="button"
+                            className="p-btn p-btn-ghost p-btn-sm"
+                            onClick={pauseResumeRecording}
+                          >
+                            {recState === "recording" ? "Pause" : "Resume"}
+                          </button>
+                          <button
+                            type="button"
+                            className="p-btn p-btn-brass p-btn-sm"
+                            onClick={stopRecording}
+                          >
+                            Stop & Save Recording
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Option B: File Dropzone */}
+                {mode === "upload" && (
+                  <div
+                    className={`p-dropzone-compact ${isDragOver ? "is-dragover" : ""} ${uploading ? "is-uploading" : ""}`}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      if (!uploading) setIsDragOver(true);
+                    }}
+                    onDragLeave={() => setIsDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDragOver(false);
+                      if (uploading) return;
+                      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                        handleFileUpload(e.dataTransfer.files[0]);
+                      }
+                    }}
+                  >
+                    <div className="p-drop-icon">↑</div>
+                    <h3 className="p-drop-title">
+                      {uploading ? "Uploading audio to local repository…" : "Drag & drop your audio recording"}
+                    </h3>
+                    <p className="p-drop-sub">Supports MP3, WAV, OGG, M4A, FLAC, or WebM (Up to 50 MB)</p>
+
+                    <button
+                      type="button"
+                      className="p-btn p-btn-brass p-btn-sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                    >
+                      {uploading ? "Uploading…" : "Browse files"}
+                    </button>
+
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.oga,.webm,.flac,.opus"
+                      style={{ display: "none" }}
+                      disabled={uploading}
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          handleFileUpload(e.target.files[0]);
+                          e.target.value = "";
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+
+                {err && <p className="p-field-error" role="alert">{err}</p>}
+
+                {replacing && (
+                  <div style={{ marginTop: 12, textAlign: "center" }}>
+                    <button
+                      type="button"
+                      className="p-btn-text p-btn-sm"
+                      onClick={() => {
+                        setReplacing(false);
+                        setErr("");
+                      }}
+                    >
+                      Cancel and keep previous audio
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Right Panel: Context Summary */}
+          <div className="p-card-panel p-side-info">
+            <h3 className="p-side-title">Story Overview</h3>
+            <div className="p-side-item">
+              <span className="p-side-label">Title</span>
+              <strong className="p-side-val">{state.form.title || "Untitled story"}</strong>
+            </div>
+            <div className="p-side-item">
+              <span className="p-side-label">Storyteller</span>
+              <span className="p-side-val">{state.form.carrier || "Not specified"}</span>
+            </div>
+            <div className="p-side-item">
+              <span className="p-side-label">Language</span>
+              <span className="p-side-val">{state.form.language || "Odia"}</span>
+            </div>
+
+            {hasWritten && (
+              <div className="p-side-item" style={{ marginTop: 16 }}>
+                <span className="p-side-label">Written story captured</span>
+                <p className="p-small" style={{ margin: "4px 0 0", color: "var(--v-ink)" }}>
+                  {state.form.story.slice(0, 120)}…
+                </p>
+              </div>
+            )}
+
+            <div className="p-side-note">
+              Audio is processed locally with Vaani & IndicConformer models. No audio is transmitted to external cloud APIs.
+            </div>
+          </div>
+        </div>
+
+        {/* Persistent Bottom Bar */}
+        <div className="p-bottom-bar">
+          <div className="p-bar-left">
+            <button
+              type="button"
+              className="p-btn p-btn-ghost p-btn-sm"
+              onClick={() => goToStep(1)}
+            >
+              ← Back to Story
+            </button>
+          </div>
+          <div className="p-bar-right">
+            {hasAudio ? (
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                {transcriptionError && (
+                  <button
+                    type="button"
+                    className="p-btn p-btn-ghost"
+                    onClick={loadSampleTranscript}
+                  >
+                    Sample Transcript (Demo) →
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="p-btn p-btn-brass"
+                  onClick={startTranscription}
+                  disabled={isTranscribing}
+                  aria-busy={isTranscribing}
+                >
+                  {isTranscribing ? (
+                    <>
+                      <span className="p-spinner-sm" aria-hidden="true" style={{ display: "inline-block", width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite", marginRight: 8, verticalAlign: "middle" }} />
+                      {transcriptionPhase === "warming" || transcriptionPhase === "checking"
+                        ? "Preparing speech recognition…"
+                        : "Transcribing your recording…"}
+                    </>
+                  ) : transcriptionError ? (
+                    <>
+                      Retry Transcription <span className="p-ar">↻</span>
+                    </>
+                  ) : (
+                    <>
+                      Proceed to Transcript Review <span className="p-ar">→</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            ) : hasWritten ? (
+              <button
+                type="button"
+                className="p-btn p-btn-dark"
+                onClick={continueWithWrittenOnly}
+              >
+                Continue with Written Story Only <span className="p-ar">→</span>
+              </button>
+            ) : (
+              <span className="p-small p-hint">
+                Please add audio or provide written text on Step 1 to proceed
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

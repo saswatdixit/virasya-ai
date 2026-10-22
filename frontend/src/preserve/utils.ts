@@ -1,0 +1,195 @@
+// Helper utilities for Preserve Your Story experience
+export const uid = () => Math.random().toString(36).slice(2, 9);
+
+export const formatTime = (sec: number | null | undefined): string => {
+  if (sec == null || !isFinite(sec)) return "—";
+  const s = Math.round(sec);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+export const formatSize = (bytes: number | null): string => {
+  if (!bytes) return "—";
+  return bytes > 1048576
+    ? (bytes / 1048576).toFixed(1) + " MB"
+    : Math.max(1, Math.round(bytes / 1024)) + " KB";
+};
+
+export const wordCount = (t: string | undefined): number =>
+  t && t.trim() ? t.trim().split(/\s+/).length : 0;
+
+export const getClock = () =>
+  new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+export function diffTokens(a: string[], b: string[]) {
+  const n = a.length,
+    m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] =
+        a[i] === b[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i + 1][j + 1]);
+    }
+  }
+  const aG = new Array(n).fill(-1);
+  const bG = new Array(m).fill(-1);
+  const groups: { id: number; a: number[]; b: number[] }[] = [];
+  let i = 0,
+    j = 0,
+    cur: { id: number; a: number[]; b: number[] } | null = null;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) {
+      cur = null;
+      i++;
+      j++;
+      continue;
+    }
+    if (!cur) {
+      cur = { id: groups.length, a: [], b: [] };
+      groups.push(cur);
+    }
+    if (j >= m || (i < n && dp[i + 1][j] >= dp[i][j + 1])) {
+      cur.a.push(i);
+      aG[i] = cur.id;
+      i++;
+    } else {
+      cur.b.push(j);
+      bG[j] = cur.id;
+      j++;
+    }
+  }
+  return { aG, bG, groups };
+}
+
+export function placeChanges(base: string, list: any[]) {
+  const out: any[] = [];
+  list.forEach((c) => {
+    const idx = base.indexOf(c.from);
+    if (idx >= 0) out.push({ c, idx });
+  });
+  out.sort((x, y) => x.idx - y.idx);
+  out.forEach((o, i) => {
+    o.n = i + 1;
+  });
+  return out;
+}
+
+export function applyChanges(
+  base: string,
+  placed: any[],
+  dec: Record<string, string>
+) {
+  let res = "",
+    pos = 0;
+  placed.forEach(({ c, idx }) => {
+    res += base.slice(pos, idx);
+    res += !c.note && dec[c.id] === "accepted" ? c.to : c.from;
+    pos = idx + c.from.length;
+  });
+  return res + base.slice(pos);
+}
+
+const END_RE = /(ଥିଲେ|ଥିଲା|ଥିଲୁ|ଥିଲି)$/;
+export function punctItems(text: string) {
+  const parts = text.split(/(\s+)/);
+  const items: any[] = [];
+  let ti = -1;
+  parts.forEach((p, pi) => {
+    if (!p || /^\s+$/.test(p)) return;
+    ti++;
+    if (ti > 0 && p === "ପ୍ରଥମେ") {
+      items.push({
+        id: "para" + ti,
+        pi,
+        type: "paragraph",
+        label: `Start a new paragraph before “${p}”`,
+      });
+    }
+    if (END_RE.test(p)) {
+      items.push({
+        id: "end" + ti,
+        pi,
+        type: "sentence",
+        ins: "।",
+        label: `Mark the end of a sentence after “${p}”`,
+      });
+    } else if (p === "ଲଗାଇ") {
+      items.push({
+        id: "com" + ti,
+        pi,
+        type: "comma",
+        ins: ",",
+        label: `Add a comma after “${p}”`,
+      });
+    }
+  });
+  return items;
+}
+
+export function punctSegments(
+  text: string,
+  items: any[],
+  dec: Record<string, string>
+) {
+  const parts = text.split(/(\s+)/);
+  const ins: Record<number, any> = {};
+  const para: Record<number, any> = {};
+  items.forEach((it) => {
+    if (it.type === "paragraph") para[it.pi] = it;
+    else ins[it.pi] = it;
+  });
+  const segs: any[] = [];
+  parts.forEach((p, pi) => {
+    if (p === "") return;
+    if (/^\s+$/.test(p)) {
+      const nx = para[pi + 1];
+      if (nx && dec[nx.id] === "accepted") {
+        segs.push({ t: "text", s: "\n\n" });
+      } else if (nx && dec[nx.id] !== "rejected") {
+        segs.push({ t: "mark", s: "¶", ghost: true, id: nx.id });
+        segs.push({ t: "text", s: p });
+      } else {
+        segs.push({ t: "text", s: p });
+      }
+      return;
+    }
+    segs.push({ t: "text", s: p });
+    const it = ins[pi];
+    if (it) {
+      const d = dec[it.id];
+      if (d === "accepted") {
+        segs.push({ t: "mark", s: it.ins, id: it.id });
+      } else if (d !== "rejected") {
+        segs.push({ t: "mark", s: it.ins, ghost: true, id: it.id });
+      }
+    }
+  });
+  return segs;
+}
+
+export const segString = (segs: any[]) =>
+  segs
+    .filter((x) => x.t === "text" || !x.ghost)
+    .map((x) => x.s)
+    .join("");
+
+export const stripP = (t: string) =>
+  t
+    .replace(/[।,.;:?!"“”‘’'()[\]—…-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+export function checkIntegrity(before: string, after: string) {
+  const A = stripP(before);
+  const B = stripP(after);
+  if (A.length === B.length && A.every((x, i) => x === B[i])) {
+    return { ok: true, removed: [], added: [] };
+  }
+  const d = diffTokens(A, B);
+  return {
+    ok: false,
+    removed: A.filter((_, i) => d.aG[i] >= 0),
+    added: B.filter((_, i) => d.bG[i] >= 0),
+  };
+}
