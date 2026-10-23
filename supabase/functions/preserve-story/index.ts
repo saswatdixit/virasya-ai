@@ -49,6 +49,8 @@ interface PreserveRequestBody {
     size?: number | null;
     duration?: number | null;
     kind?: string;
+    storage_path?: string;
+    bucket?: string;
   } | null;
   raw_transcripts?: Record<string, any>;
   vocabulary?: Array<Record<string, any>>;
@@ -261,14 +263,119 @@ Deno.serve(async (req: Request) => {
     const provenanceHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 12).toUpperCase();
     const provenanceId = `VIR-${provenanceHash}`;
 
-    // 7. Format Complete Database Record
-    const audioPayload = body.audio ? {
-      filename: String(body.audio.filename || body.audio.name || ""),
-      url: body.audio.url || null,
-      size: typeof body.audio.size === "number" ? body.audio.size : null,
-      duration: typeof body.audio.duration === "number" ? body.audio.duration : null,
-      kind: body.audio.kind || "uploaded",
-    } : null;
+    // 7. Validate and Format Audio Record
+    const MAX_AUDIO_BYTES = 5 * 1024 * 1024; // 5 MiB (5,242,880 bytes)
+    const MAX_AUDIO_DURATION_SEC = 60.0;
+    const ALLOWED_STORAGE_BUCKET = "story-recordings-private";
+
+    let audioPayload = null;
+    if (body.audio) {
+      const audioInput = body.audio;
+      const filename = String(audioInput.filename || audioInput.name || "").trim();
+      const storagePath = typeof audioInput.storage_path === "string" ? audioInput.storage_path.trim() : null;
+      let bucket = typeof audioInput.bucket === "string" ? audioInput.bucket.trim() : null;
+      const reportedDuration = typeof audioInput.duration === "number" ? audioInput.duration : null;
+      const reportedSize = typeof audioInput.size === "number" ? audioInput.size : null;
+
+      if (bucket && bucket !== ALLOWED_STORAGE_BUCKET) {
+        return new Response(
+          JSON.stringify({
+            error: `Invalid storage bucket '${bucket}'. Only '${ALLOWED_STORAGE_BUCKET}' is permitted.`,
+            code: "INVALID_BUCKET",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (storagePath && !bucket) {
+        bucket = ALLOWED_STORAGE_BUCKET;
+      }
+
+      // Enforce strict security validation on storage path
+      if (storagePath) {
+        if (storagePath.includes("..") || storagePath.includes("\\") || storagePath.startsWith("/")) {
+          return new Response(
+            JSON.stringify({
+              error: "Malformed storage path. Path traversal and backslashes are strictly forbidden.",
+              code: "MALFORMED_STORAGE_PATH",
+            }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Ownership: Path must begin with user.id/
+        const expectedPrefix = `${user.id}/`;
+        if (!storagePath.startsWith(expectedPrefix)) {
+          return new Response(
+            JSON.stringify({
+              error: "Forbidden: Storage path must reside within the authenticated user's directory.",
+              code: "FORBIDDEN_STORAGE_PATH",
+            }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Verify object existence in Supabase Storage using adminClient
+        const objectFileName = storagePath.slice(expectedPrefix.length);
+        const { data: objectList, error: listError } = await adminClient.storage
+          .from(bucket!)
+          .list(user.id, { search: objectFileName, limit: 10 });
+
+        if (listError) {
+          console.error("Storage list error:", listError);
+          return new Response(
+            JSON.stringify({
+              error: `Storage verification failed: ${listError.message}`,
+              code: "STORAGE_VERIFICATION_ERROR",
+            }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const foundObject = objectList?.find((o) => o.name === objectFileName);
+        if (!foundObject) {
+          return new Response(
+            JSON.stringify({
+              error: `Referenced audio object '${storagePath}' was not found in storage.`,
+              code: "AUDIO_OBJECT_NOT_FOUND",
+            }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Enforce verified size limit <= 5 MiB
+        const actualSizeBytes = foundObject.metadata?.size ?? reportedSize ?? 0;
+        if (actualSizeBytes > MAX_AUDIO_BYTES) {
+          return new Response(
+            JSON.stringify({
+              error: `Audio file size (${actualSizeBytes} bytes) exceeds the 5 MiB (5,242,880 bytes) limit.`,
+              code: "AUDIO_TOO_LARGE",
+            }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+
+      // Enforce duration boundary (if client reported duration, must be <= 60s)
+      if (reportedDuration !== null && reportedDuration > MAX_AUDIO_DURATION_SEC) {
+        return new Response(
+          JSON.stringify({
+            error: `Audio duration (${reportedDuration}s) exceeds the maximum limit of 60 seconds.`,
+            code: "AUDIO_TOO_LONG",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      audioPayload = {
+        filename: filename || "recording",
+        url: audioInput.url || null,
+        size: reportedSize,
+        duration: reportedDuration,
+        kind: audioInput.kind || "uploaded",
+        storage_path: storagePath,
+        bucket: bucket || (storagePath ? ALLOWED_STORAGE_BUCKET : null),
+      };
+    }
 
     const rawTranscripts = typeof body.raw_transcripts === "object" && body.raw_transcripts !== null
       ? body.raw_transcripts

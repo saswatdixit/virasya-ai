@@ -1,11 +1,17 @@
 import { useState, useRef, useEffect } from "react";
 import { usePreserve } from "../context/PreserveContext";
 import { useAuth } from "../../auth";
-import { uploadAudioToPrivateBucket } from "../../supabase";
+import { uploadAudioToPrivateBucket, isSupabaseConfigured } from "../../supabase";
 import { formatTime } from "../utils";
 import AudioPlayer from "../components/AudioPlayer";
-import { uploadAudioToBackend } from "../api";
+import { uploadAudioToBackend, isBackendConfigured } from "../api";
 import { LANGUAGE_OPTIONS } from "../types";
+import {
+  MAX_AUDIO_DURATION_SECONDS,
+  MAX_AUDIO_SIZE_BYTES,
+  ALLOWED_AUDIO_EXTENSIONS,
+  AUDIO_STORAGE_BUCKET,
+} from "../constants";
 
 export default function Page2Voice() {
   const {
@@ -39,6 +45,7 @@ export default function Page2Voice() {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const recordedBytesRef = useRef<number>(0);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<any>(null);
   const elapsedRef = useRef(0);
@@ -67,6 +74,10 @@ export default function Page2Voice() {
     timerRef.current = setInterval(() => {
       elapsedRef.current += 0.25;
       setElapsed(elapsedRef.current);
+      if (elapsedRef.current >= MAX_AUDIO_DURATION_SECONDS) {
+        // Automatically stop recording when reaching 60 seconds
+        stopRecording();
+      }
     }, 250);
   };
 
@@ -112,6 +123,7 @@ export default function Page2Voice() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       audioChunksRef.current = [];
+      recordedBytesRef.current = 0;
       elapsedRef.current = 0;
       setElapsed(0);
 
@@ -130,7 +142,15 @@ export default function Page2Voice() {
       mediaRecorderRef.current = mr;
 
       mr.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+          recordedBytesRef.current += e.data.size;
+          // Guard against oversized recording while streaming
+          if (recordedBytesRef.current > MAX_AUDIO_SIZE_BYTES) {
+            mr.stop();
+            setErr("Recording reached the maximum permitted size of 5 MiB (5,242,880 bytes) and was stopped.");
+          }
+        }
       };
 
       mr.onstop = async () => {
@@ -138,55 +158,84 @@ export default function Page2Voice() {
         if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
         const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || "audio/webm" });
+        if (blob.size === 0) {
+          setErr("Recording was empty. Please check your microphone and try again.");
+          setRecState("idle");
+          return;
+        }
+
+        if (blob.size > MAX_AUDIO_SIZE_BYTES) {
+          setErr(`Recording (${(blob.size / (1024 * 1024)).toFixed(2)} MiB) exceeds the 5 MiB (5,242,880 bytes) limit. Please re-record a shorter take.`);
+          setRecState("idle");
+          return;
+        }
+
         const ext = mr.mimeType?.includes("ogg") ? "ogg" : "webm";
         const filename = `recording_${Date.now()}.${ext}`;
         const file = new File([blob], filename, { type: blob.type });
 
-        setUploading(true);
-        try {
-          const res = await uploadAudioToBackend(file);
-          let audioUrl = res.url;
-          let storagePath: string | undefined = undefined;
-          if (user?.id) {
-            try {
-              const cloudRes = await uploadAudioToPrivateBucket(file, res.filename || filename, user.id);
-              if (cloudRes.signedUrl) {
-                audioUrl = cloudRes.signedUrl;
-                storagePath = cloudRes.path;
-              }
-            } catch (cloudErr) {
-              console.warn("[Cloud Storage] Private audio upload warning:", cloudErr);
-            }
-          }
-          setAudio({
-            name: res.filename,
-            url: audioUrl,
-            size: res.size,
-            duration: elapsedRef.current,
-            kind: "recorded",
-            storage_path: storagePath,
-            bucket: storagePath ? "story-recordings-private" : undefined,
-          });
-          setReplacing(false);
-          setRecState("idle");
-        } catch (uploadErr: any) {
-          console.warn("Backend upload failed, keeping blob url:", uploadErr);
-          const localUrl = URL.createObjectURL(blob);
-          setAudio({
+        const localUrl = URL.createObjectURL(blob);
+        const finalDur = Math.min(elapsedRef.current, MAX_AUDIO_DURATION_SECONDS);
+
+        // Retain binary in memory in context for immediate use or deferred guest upload
+        setAudio(
+          {
             name: filename,
             url: localUrl,
             size: blob.size,
-            duration: elapsedRef.current,
+            duration: finalDur,
             kind: "recorded",
-          });
-          setReplacing(false);
-          setRecState("idle");
-        } finally {
-          setUploading(false);
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach((t) => t.stop());
-            streamRef.current = null;
+          },
+          file
+        );
+
+        setUploading(true);
+        // Decoupled Supabase Cloud Upload: only depends on user & Supabase, NOT on Flask!
+        let storagePath: string | undefined = undefined;
+        let signedUrl: string | undefined = undefined;
+
+        if (user?.id && isSupabaseConfigured()) {
+          try {
+            const cloudRes = await uploadAudioToPrivateBucket(file, filename, user.id);
+            if (cloudRes.error) {
+              console.warn("[Cloud Storage] Upload notice:", cloudRes.error.message);
+            } else if (cloudRes.path) {
+              storagePath = cloudRes.path;
+              signedUrl = cloudRes.signedUrl || undefined;
+              setAudio(
+                {
+                  name: filename,
+                  url: signedUrl || localUrl,
+                  size: blob.size,
+                  duration: finalDur,
+                  kind: "recorded",
+                  storage_path: storagePath,
+                  bucket: AUDIO_STORAGE_BUCKET,
+                },
+                file
+              );
+            }
+          } catch (cloudErr) {
+            console.warn("[Cloud Storage] Upload exception:", cloudErr);
           }
+        }
+
+        // Asynchronous background sync to local workbench (if configured, never blocking)
+        if (isBackendConfigured()) {
+          try {
+            await uploadAudioToBackend(file);
+          } catch (backendErr) {
+            console.warn("[Backend Sync] Local workbench notice:", backendErr);
+          }
+        }
+
+        setReplacing(false);
+        setRecState("idle");
+        setUploading(false);
+
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((t) => t.stop());
+          streamRef.current = null;
         }
       };
 
@@ -224,92 +273,109 @@ export default function Page2Voice() {
 
     if (file.size === 0) {
       setErr("The selected file is empty (0 bytes). Please select a valid audio file.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
-    const MAX_SIZE = 50 * 1024 * 1024; // 50MB
-    if (file.size > MAX_SIZE) {
+    if (file.size > MAX_AUDIO_SIZE_BYTES) {
       setErr(
-        `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 50 MB limit. Please select a smaller audio file.`
+        `File size (${(file.size / (1024 * 1024)).toFixed(2)} MiB) exceeds the 5 MiB (5,242,880 bytes) limit. Please select a shorter recording or compressed file.`
       );
+      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
-    const allowed = [".wav", ".ogg", ".mp3", ".flac", ".webm", ".m4a", ".aac"];
-    const ext = "." + file.name.split(".").pop()?.toLowerCase();
-    if (!allowed.includes(ext)) {
-      setErr(`Audio format '${ext}' not supported. Please use MP3, WAV, OGG, M4A, or WebM.`);
+    const ext = "." + (file.name.split(".").pop()?.toLowerCase() || "");
+    if (!ALLOWED_AUDIO_EXTENSIONS.includes(ext as any)) {
+      setErr(`Audio format '${ext}' is not supported. Permitted formats: MP3, WAV, OGG, M4A, FLAC, AAC, or WebM.`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
     setUploading(true);
-    try {
-      const res = await uploadAudioToBackend(file);
-      let audioUrl = res.url;
-      let storagePath: string | undefined = undefined;
-      if (user?.id) {
-        try {
-          const cloudRes = await uploadAudioToPrivateBucket(file, res.filename || file.name, user.id);
-          if (cloudRes.signedUrl) {
-            audioUrl = cloudRes.signedUrl;
-            storagePath = cloudRes.path;
-          }
-        } catch (cloudErr) {
-          console.warn("[Cloud Storage] Private audio upload warning:", cloudErr);
-        }
+    const objectUrl = URL.createObjectURL(file);
+    const audioEl = new Audio();
+    audioEl.src = objectUrl;
+
+    audioEl.onloadedmetadata = async () => {
+      const dur = audioEl.duration;
+      if (!dur || isNaN(dur) || dur <= 0) {
+        URL.revokeObjectURL(objectUrl);
+        setUploading(false);
+        setErr("Unable to determine audio duration. Please ensure the file is a valid, playable audio recording.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
       }
 
-      // Determine audio duration
-      const audioEl = new Audio();
-      const objectUrl = URL.createObjectURL(file);
-      audioEl.src = objectUrl;
-      audioEl.onloadedmetadata = () => {
-        setAudio({
-          name: res.filename,
-          url: audioUrl,
-          size: res.size,
-          duration: audioEl.duration || null,
-          kind: "uploaded",
-          storage_path: storagePath,
-          bucket: storagePath ? "story-recordings-private" : undefined,
-        });
-        setReplacing(false);
-        setUploading(false);
+      if (dur > MAX_AUDIO_DURATION_SECONDS) {
         URL.revokeObjectURL(objectUrl);
-      };
-      audioEl.onerror = () => {
-        setAudio({
-          name: res.filename,
-          url: audioUrl,
-          size: res.size,
-          duration: null,
-          kind: "uploaded",
-          storage_path: storagePath,
-          bucket: storagePath ? "story-recordings-private" : undefined,
-        });
-        setReplacing(false);
         setUploading(false);
-        URL.revokeObjectURL(objectUrl);
-      };
-    } catch (uploadErr: any) {
-      console.warn("Backend upload skipped or unavailable (preview mode):", uploadErr);
-      const audioEl = new Audio();
-      const objectUrl = URL.createObjectURL(file);
-      audioEl.src = objectUrl;
-      const finishLocal = (dur: number | null) => {
-        setAudio({
+        setErr(`Audio duration (${dur.toFixed(1)}s) exceeds the maximum limit of 60 seconds accepted for preservation and transcription.`);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      // Valid size and duration! Retain binary file in memory in context
+      setAudio(
+        {
           name: file.name,
           url: objectUrl,
           size: file.size,
           duration: dur,
           kind: "uploaded",
-        });
-        setReplacing(false);
-        setUploading(false);
-      };
-      audioEl.onloadedmetadata = () => finishLocal(audioEl.duration || null);
-      audioEl.onerror = () => finishLocal(null);
-    }
+        },
+        file
+      );
+
+      // Decoupled Supabase Cloud Upload: only depends on user & Supabase, NOT on Flask!
+      let storagePath: string | undefined = undefined;
+      let signedUrl: string | undefined = undefined;
+
+      if (user?.id && isSupabaseConfigured()) {
+        try {
+          const cloudRes = await uploadAudioToPrivateBucket(file, file.name, user.id);
+          if (cloudRes.error) {
+            console.warn("[Cloud Storage] Private audio upload notice:", cloudRes.error.message);
+          } else if (cloudRes.path) {
+            storagePath = cloudRes.path;
+            signedUrl = cloudRes.signedUrl || undefined;
+            setAudio(
+              {
+                name: file.name,
+                url: signedUrl || objectUrl,
+                size: file.size,
+                duration: dur,
+                kind: "uploaded",
+                storage_path: storagePath,
+                bucket: AUDIO_STORAGE_BUCKET,
+              },
+              file
+            );
+          }
+        } catch (cloudErr) {
+          console.warn("[Cloud Storage] Private audio upload exception:", cloudErr);
+        }
+      }
+
+      // Asynchronous background sync to local workbench (if configured, never blocking)
+      if (isBackendConfigured()) {
+        try {
+          await uploadAudioToBackend(file);
+        } catch (backendErr) {
+          console.warn("[Backend Sync] Local workbench notice:", backendErr);
+        }
+      }
+
+      setReplacing(false);
+      setUploading(false);
+    };
+
+    audioEl.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      setUploading(false);
+      setErr("Failed to decode or inspect audio file. Please ensure the file is an intact, playable audio recording.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
   };
 
   return (
@@ -611,14 +677,14 @@ export default function Page2Voice() {
                         <span className="p-rec-inner" />
                       </button>
 
-                      <div className="p-rec-timer">{formatTime(elapsed)}</div>
+                      <div className="p-rec-timer">{formatTime(elapsed)} / 01:00</div>
 
                       <p className="p-rec-status">
-                        {recState === "idle" && "Click the record button to speak."}
+                        {recState === "idle" && "Click the record button to speak (up to 60 seconds)."}
                         {recState === "requesting" && "Requesting microphone permission…"}
-                        {recState === "recording" && "Recording in progress. Speak naturally in Odia or your native dialect."}
+                        {recState === "recording" && "Recording in progress (max 60s). Speak naturally in your native language."}
                         {recState === "paused" && "Recording paused."}
-                        {uploading && "Saving audio to local repository…"}
+                        {uploading && "Uploading audio recording…"}
                       </p>
 
                       {recState === "recording" && (
@@ -667,9 +733,9 @@ export default function Page2Voice() {
                   >
                     <div className="p-drop-icon">↑</div>
                     <h3 className="p-drop-title">
-                      {uploading ? "Uploading audio to local repository…" : "Drag & drop your audio recording"}
+                      {uploading ? "Uploading audio recording…" : "Drag & drop your audio recording"}
                     </h3>
-                    <p className="p-drop-sub">Supports MP3, WAV, OGG, M4A, FLAC, or WebM (Up to 50 MB)</p>
+                    <p className="p-drop-sub">Supports MP3, WAV, OGG, M4A, FLAC, or WebM (Max 60s &middot; 5 MiB)</p>
 
                     <button
                       type="button"

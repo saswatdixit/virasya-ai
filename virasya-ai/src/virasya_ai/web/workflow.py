@@ -11,7 +11,7 @@ from virasya_ai.transcription.ingestion.audio import SUPPORTED_SUFFIXES, validat
 from virasya_ai.transcription.service import GnaniTranscriptionService
 from virasya_ai.web.languages import get_language
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MiB (5,242,880 bytes)
 
 
 def transcribe_uploaded_audio(
@@ -24,7 +24,7 @@ def transcribe_uploaded_audio(
 ) -> TranscriptResult:
     """Validate an in-memory upload, then call the provider exactly once."""
     if len(audio_bytes) > MAX_UPLOAD_BYTES:
-        raise UploadError("The audio file exceeds the 25 MB upload limit.")
+        raise UploadError("The audio file exceeds the 5 MiB (5,242,880 bytes) upload limit.")
     language = get_language(language_code)
     if language is None or not language.provider_configured:
         raise UnsupportedLanguageError(

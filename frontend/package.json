@@ -9,7 +9,7 @@
     "backend": "virasya-ai/.venv/Scripts/python virasya-ai/src/virasya_ai/workbench/app.py",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node tests/check-india-projection.cjs && node tests/check-preservation-step-definitions.cjs && node tests/test-preview-flow-simulation.cjs && node tests/test-frontend-preview-readiness.cjs && node tests/test-environment-separation.cjs && node tests/test-header-navigation-alignment.cjs && node tests/test-auth-modal-branding.cjs && node tests/test-storyteller-banner.cjs && node tests/test-provenance-and-punctuation-truthfulness.cjs",
+    "test": "node tests/check-india-projection.cjs && node tests/check-preservation-step-definitions.cjs && node tests/test-preview-flow-simulation.cjs && node tests/test-frontend-preview-readiness.cjs && node tests/test-environment-separation.cjs && node tests/test-header-navigation-alignment.cjs && node tests/test-auth-modal-branding.cjs && node tests/test-storyteller-banner.cjs && node tests/test-provenance-and-punctuation-truthfulness.cjs && node tests/test-audio-limits-and-storage.cjs",
     "test:preview": "node tests/test-frontend-preview-readiness.cjs && node tests/test-preview-flow-simulation.cjs",
     "test:e2e": "node tests/test-audio-upload-full.cjs && node tests/test-real-asr-transcription.cjs && node tests/test-explore-and-privacy.cjs",
     "preview": "vite preview"

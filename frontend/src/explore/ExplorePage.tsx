@@ -10,6 +10,7 @@ import {
 } from "../preserve/api";
 import { SAMPLE_EXPLORE_STORIES } from "./sampleStories";
 import { PreserveStoryIcon } from "../components/shared/Icons";
+import { getStoryAudioPlaybackUrl } from "../supabase";
 
 const CATEGORIES = [
   "All",
@@ -36,6 +37,155 @@ const LANGUAGES = [
   "Telugu",
   "Other",
 ];
+
+function ExploreAudioPlayer({
+  storyId,
+  audio,
+}: {
+  storyId: string;
+  audio: NonNullable<ExploreDetailStory["audio"]>;
+}) {
+  const [playbackSrc, setPlaybackSrc] = useState<string | null>(audio.url || null);
+  const [isResolving, setIsResolving] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const refreshedOnceRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    let active = true;
+    refreshedOnceRef.current = false;
+
+    // Direct playback for local, blob, or workbench audio
+    if (
+      audio.url &&
+      (audio.url.startsWith("blob:") ||
+        audio.url.startsWith("data:") ||
+        audio.url.startsWith("/api/audio/"))
+    ) {
+      setPlaybackSrc(audio.url);
+      setErrorMsg(null);
+      return;
+    }
+
+    // Resolve fresh authorized signed URL from Supabase
+    setIsResolving(true);
+    setErrorMsg(null);
+
+    getStoryAudioPlaybackUrl(storyId, { fallbackUrl: audio.url, storagePath: audio.storage_path })
+      .then((freshUrl) => {
+        if (!active) return;
+        if (freshUrl) {
+          setPlaybackSrc(freshUrl);
+        } else if (audio.url) {
+          setPlaybackSrc(audio.url);
+        } else {
+          setErrorMsg("Audio playback ticket unavailable.");
+        }
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.warn("[ExploreAudio] Playback resolution error:", err);
+        if (audio.url) {
+          setPlaybackSrc(audio.url);
+        } else {
+          setErrorMsg("Audio recording is currently unavailable.");
+        }
+      })
+      .finally(() => {
+        if (active) setIsResolving(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [storyId, audio.url, audio.storage_path]);
+
+  const handleAudioError = async () => {
+    // If the browser audio element failed to load (e.g. token expired), attempt a fresh refresh
+    if (!refreshedOnceRef.current) {
+      refreshedOnceRef.current = true;
+      setIsResolving(true);
+      try {
+        const fresh = await getStoryAudioPlaybackUrl(storyId, { storagePath: audio.storage_path });
+        if (fresh) {
+          setPlaybackSrc(fresh);
+          setErrorMsg(null);
+          setIsResolving(false);
+          return;
+        }
+      } catch (e) {
+        console.warn("[ExploreAudio] Token refresh failed:", e);
+      }
+      setIsResolving(false);
+    }
+    setErrorMsg("Audio playback expired. Click below to refresh authorization.");
+  };
+
+  const handleManualRefresh = async () => {
+    setIsResolving(true);
+    setErrorMsg(null);
+    try {
+      const fresh = await getStoryAudioPlaybackUrl(storyId, { storagePath: audio.storage_path });
+      if (fresh) {
+        setPlaybackSrc(fresh);
+      } else {
+        setErrorMsg("Unable to refresh playback authorization.");
+      }
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Failed to refresh playback ticket.");
+    } finally {
+      setIsResolving(false);
+    }
+  };
+
+  return (
+    <div className="exp-audio-box">
+      <div className="exp-audio-top">
+        <div className="exp-audio-label">Preserved Audio Recording</div>
+        <span className="exp-audio-pill">Native Master Audio</span>
+      </div>
+
+      <div className="exp-audio-player-wrap">
+        {isResolving && !playbackSrc ? (
+          <div style={{ padding: "12px", fontSize: "13px", color: "var(--v-text-sub)" }}>
+            Obtaining authorized archival playback ticket…
+          </div>
+        ) : errorMsg ? (
+          <div style={{ padding: "10px 0" }}>
+            <p style={{ color: "var(--v-terracotta, #B85D32)", fontSize: "13px", margin: "0 0 8px" }}>
+              {errorMsg}
+            </p>
+            <button
+              type="button"
+              className="p-btn-text p-btn-sm"
+              onClick={handleManualRefresh}
+              disabled={isResolving}
+              style={{ textDecoration: "underline", cursor: "pointer" }}
+            >
+              {isResolving ? "Refreshing ticket…" : "↻ Refresh Playback Ticket"}
+            </button>
+          </div>
+        ) : playbackSrc ? (
+          <audio
+            controls
+            preload="metadata"
+            src={playbackSrc}
+            className="exp-native-audio"
+            onError={handleAudioError}
+          >
+            Your browser does not support the audio element.
+          </audio>
+        ) : null}
+      </div>
+
+      <div className="exp-audio-meta">
+        <span className="exp-audio-filename">{audio.filename || "recording"}</span>
+        <span className="exp-audio-badge">
+          {audio.storage_path ? "Stored sovereignly in repository" : "Archival audio record"}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export default function ExplorePage() {
   const [stories, setStories] = useState<ExploreStoryCard[]>([]);
@@ -495,29 +645,8 @@ export default function ExplorePage() {
                 </div>
 
                 {/* Preserved Audio Recording If Present */}
-                {detailStory.audio && detailStory.audio.url && (
-                  <div className="exp-audio-box">
-                    <div className="exp-audio-top">
-                      <div className="exp-audio-label">
-                        Preserved Audio Recording
-                      </div>
-                      <span className="exp-audio-pill">Native Master Audio</span>
-                    </div>
-                    <div className="exp-audio-player-wrap">
-                      <audio
-                        controls
-                        preload="metadata"
-                        src={detailStory.audio.url}
-                        className="exp-native-audio"
-                      >
-                        Your browser does not support the audio element.
-                      </audio>
-                    </div>
-                    <div className="exp-audio-meta">
-                      <span className="exp-audio-filename">{detailStory.audio.filename}</span>
-                      <span className="exp-audio-badge">Stored sovereignly in repository</span>
-                    </div>
-                  </div>
+                {detailStory.audio && (detailStory.audio.url || detailStory.audio.storage_path) && (
+                  <ExploreAudioPlayer storyId={detailStory.id} audio={detailStory.audio} />
                 )}
 
                 {/* Full Preserved Narrative */}

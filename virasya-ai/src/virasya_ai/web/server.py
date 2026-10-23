@@ -25,9 +25,13 @@ from virasya_ai.config import (
 )
 from virasya_ai.exceptions import (
     AudioError,
+    AudioTooLongError,
+    CorruptAudioError,
+    EmptyAudioError,
     MissingApiKeyError,
     StorageError,
     TranscriptionProviderError,
+    UnsupportedFormatError,
     UnsupportedLanguageError,
     UploadError,
     VirasyaError,
@@ -168,6 +172,20 @@ class StudioHandler(BaseHTTPRequestHandler):
         parsed_url = urlparse(self.path)
         path = parsed_url.path
 
+        # Reject oversized requests before buffering into memory where possible
+        content_length_hdr = self.headers.get("Content-Length")
+        if content_length_hdr:
+            try:
+                content_length = int(content_length_hdr)
+                if content_length > MAX_REQUEST_BYTES:
+                    self._send_json(
+                        {"error": "Request body exceeds maximum allowed size (5 MiB audio limit).", "code": "PAYLOAD_TOO_LARGE"},
+                        HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    )
+                    return
+            except ValueError:
+                pass
+
         try:
             if path == "/api/upload":
                 self._handle_upload()
@@ -257,7 +275,10 @@ class StudioHandler(BaseHTTPRequestHandler):
         safe_name = sanitize_filename(original_filename)
         audio_bytes = file_field.file.read(MAX_UPLOAD_BYTES + 1)
         if len(audio_bytes) > MAX_UPLOAD_BYTES:
-            self._send_json({"error": "Audio file exceeds upload limit.", "code": "FILE_TOO_LARGE"}, HTTPStatus.BAD_REQUEST)
+            self._send_json(
+                {"error": "Audio file exceeds the 5 MiB (5,242,880 bytes) upload limit.", "code": "FILE_TOO_LARGE"},
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+            )
             return
         if not audio_bytes:
             self._send_json({"error": "Audio file is empty (0 bytes).", "code": "EMPTY_FILE"}, HTTPStatus.BAD_REQUEST)
@@ -265,6 +286,24 @@ class StudioHandler(BaseHTTPRequestHandler):
 
         dest_path = INPUT_AUDIO_DIR / safe_name
         dest_path.write_bytes(audio_bytes)
+
+        # Enforce duration limit <= 60 seconds and decodability at server boundary
+        try:
+            from virasya_ai.transcription.ingestion.audio import audio_duration_seconds, MAX_DURATION_SECONDS
+            dur = audio_duration_seconds(dest_path)
+            if dur > MAX_DURATION_SECONDS:
+                dest_path.unlink(missing_ok=True)
+                self._send_json(
+                    {"error": f"Audio duration of {dur:.1f}s exceeds the 60-second limit accepted by GNANI AI.", "code": "AUDIO_TOO_LONG"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+                return
+        except (CorruptAudioError, UnsupportedFormatError, EmptyAudioError) as exc:
+            dest_path.unlink(missing_ok=True)
+            self._send_json({"error": str(exc), "code": "INVALID_AUDIO"}, HTTPStatus.BAD_REQUEST)
+            return
+        except Exception:
+            pass
 
         self._send_json({
             "status": "success",
@@ -304,6 +343,20 @@ class StudioHandler(BaseHTTPRequestHandler):
         audio_path = INPUT_AUDIO_DIR / safe_name
         if not audio_path.exists():
             raise ValueError(f"Audio file '{safe_name}' not found. Please upload it first.")
+
+        # Re-enforce size and duration boundaries before sending to GNANI API
+        if audio_path.stat().st_size > MAX_UPLOAD_BYTES:
+            raise UploadError("Audio file exceeds the 5 MiB (5,242,880 bytes) upload limit.")
+
+        try:
+            from virasya_ai.transcription.ingestion.audio import audio_duration_seconds, MAX_DURATION_SECONDS
+            dur = audio_duration_seconds(audio_path)
+            if dur > MAX_DURATION_SECONDS:
+                raise AudioTooLongError(f"Audio duration ({dur:.1f}s) exceeds the maximum 60-second GNANI API limit.")
+        except (CorruptAudioError, UnsupportedFormatError, AudioTooLongError):
+            raise
+        except Exception:
+            pass
 
         # Determine and validate language code:
         # User must explicitly select the audio language from the 10 supported Indic languages.

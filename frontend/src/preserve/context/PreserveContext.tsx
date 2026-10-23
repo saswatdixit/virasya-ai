@@ -41,7 +41,13 @@ import { useAuth } from "../../auth";
 import {
   preserveStoryToSupabase,
   isSupabaseConfigured,
+  uploadAudioToPrivateBucket,
 } from "../../supabase";
+import {
+  MAX_AUDIO_SIZE_BYTES,
+  MAX_AUDIO_DURATION_SECONDS,
+  AUDIO_STORAGE_BUCKET,
+} from "../constants";
 
 const INITIAL_STATE: PreserveState = {
   stage: 1,
@@ -120,7 +126,8 @@ interface PreserveContextType {
   goToStep: (stepNumber: number) => void;
   updateForm: (field: keyof StoryForm, value: string) => void;
   fillSampleStory: () => void;
-  setAudio: (audio: AudioItem | null) => void;
+  setAudio: (audio: AudioItem | null, file?: File | Blob | null) => void;
+  audioFile: File | Blob | null;
   startTranscription: () => Promise<void>;
   executeTranscription: (langOrModel?: string) => Promise<{
     success: boolean;
@@ -329,14 +336,19 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("hi-IN");
   const [isLanguageConfirmed, setIsLanguageConfirmed] = useState<boolean>(false);
 
+  const [audioFile, setAudioFileState] = useState<File | Blob | null>(null);
+  const audioFileRef = useRef<File | Blob | null>(null);
+
   const clearTranscriptionError = useCallback(() => {
     setTranscriptionError(null);
   }, []);
 
-  const setAudio = useCallback((audio: AudioItem | null) => {
+  const setAudio = useCallback((audio: AudioItem | null, file?: File | Blob | null) => {
     setTranscriptionError(null);
     setTranscriptionPhase("idle");
     setIsLanguageConfirmed(false); // Revalidate/reset language confirmation when recording changes
+    audioFileRef.current = file ?? null;
+    setAudioFileState(file ?? null);
     setState((s) => {
       if (s.audio && s.audio.url && audio && audio.url !== s.audio.url) {
         try {
@@ -371,6 +383,18 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         const noAudioMsg = "No audio file found to transcribe. Please upload or record an audio file.";
         setTranscriptionError(noAudioMsg);
         return { success: false, vaaniDone: false, conformerDone: false, error: noAudioMsg };
+      }
+
+      // Enforce strict size and duration boundaries before sending to GNANI API
+      if (currentAudio?.size && currentAudio.size > MAX_AUDIO_SIZE_BYTES) {
+        const sizeMsg = `Audio file (${(currentAudio.size / (1024 * 1024)).toFixed(2)} MiB) exceeds the maximum allowed limit of 5 MiB (5,242,880 bytes).`;
+        setTranscriptionError(sizeMsg);
+        return { success: false, vaaniDone: false, conformerDone: false, error: sizeMsg };
+      }
+      if (currentAudio?.duration && currentAudio.duration > MAX_AUDIO_DURATION_SECONDS) {
+        const durMsg = `Audio duration (${currentAudio.duration.toFixed(1)}s) exceeds the maximum 60-second limit accepted by GNANI AI.`;
+        setTranscriptionError(durMsg);
+        return { success: false, vaaniDone: false, conformerDone: false, error: durMsg };
       }
 
       transcribingRef.current.vaani = true;
@@ -926,6 +950,49 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         );
       }
 
+      // Revalidate audio limits and ensure cloud archival
+      if (state.audio) {
+        if (state.audio.size && state.audio.size > MAX_AUDIO_SIZE_BYTES) {
+          throw new Error("Audio recording exceeds the maximum allowed limit of 5 MiB (5,242,880 bytes).");
+        }
+        if (state.audio.duration && state.audio.duration > MAX_AUDIO_DURATION_SECONDS) {
+          throw new Error("Audio recording exceeds the maximum allowed limit of 60 seconds.");
+        }
+
+        // If audio has no confirmed cloud storage_path (e.g. recorded while guest), upload now!
+        if (!state.audio.storage_path) {
+          const rawBinary = audioFileRef.current;
+          if (!rawBinary) {
+            throw new Error(
+              "Audio recording binary is not available in browser memory. If you reloaded the page before signing in, please return to Step 2 to re-record or re-select your audio."
+            );
+          }
+          const cloudRes = await uploadAudioToPrivateBucket(rawBinary, state.audio.name || "recording.webm", user.id);
+          if (cloudRes.error || !cloudRes.path) {
+            throw new Error(`Failed to upload audio recording to archival cloud storage: ${cloudRes.error?.message || "Upload failed"}`);
+          }
+          // Embed canonical storage references in payload
+          payload.audio = {
+            filename: state.audio.name,
+            url: cloudRes.signedUrl || state.audio.url || undefined,
+            size: state.audio.size,
+            duration: state.audio.duration,
+            kind: state.audio.kind,
+            storage_path: cloudRes.path,
+            bucket: AUDIO_STORAGE_BUCKET,
+          };
+          setState((s) => ({
+            ...s,
+            audio: s.audio ? {
+              ...s.audio,
+              storage_path: cloudRes.path,
+              bucket: AUDIO_STORAGE_BUCKET,
+              url: cloudRes.signedUrl || s.audio.url,
+            } : null,
+          }));
+        }
+      }
+
       // Execute real database persistence to Supabase public.stories
       const res = await preserveStoryToSupabase(payload as any, user.id);
 
@@ -1024,6 +1091,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         updateForm,
         fillSampleStory,
         setAudio,
+        audioFile,
         startTranscription,
         executeTranscription,
         continueWithWrittenOnly,

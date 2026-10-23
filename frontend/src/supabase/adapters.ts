@@ -61,6 +61,8 @@ export function audioItemToDbAudio(
     size: audio.size ?? null,
     duration: audio.duration ?? null,
     kind: audio.kind,
+    storage_path: audio.storage_path || undefined,
+    bucket: audio.bucket || undefined,
   };
 }
 
@@ -81,6 +83,8 @@ export function dbAudioToAudioItem(dbAudio: DbAudioMetadata | null | undefined):
     size: dbAudio.size ?? null,
     duration: dbAudio.duration ?? null,
     kind: validKind,
+    storage_path: dbAudio.storage_path || undefined,
+    bucket: dbAudio.bucket || undefined,
   };
 }
 

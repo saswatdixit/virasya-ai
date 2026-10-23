@@ -136,3 +136,42 @@ export async function deleteAudioFromPrivateBucket(
     return false;
   }
 }
+
+/**
+ * Resolves an authorized, short-lived playback URL for a story's audio recording.
+ * Invokes the trusted Edge Function `get-story-audio` to verify access permissions,
+ * and falls back safely to direct user signed URLs or provided fallback URLs.
+ */
+export async function getStoryAudioPlaybackUrl(
+  storyId: string,
+  options?: { fallbackUrl?: string | null; storagePath?: string | null }
+): Promise<string | null> {
+  const supabase = getSupabase();
+  if (!supabase || !isSupabaseConfigured() || !storyId) {
+    return options?.fallbackUrl || null;
+  }
+
+  // 1. Invoke trusted server-side Edge Function for authorized playback
+  try {
+    const { data, error } = await supabase.functions.invoke("get-story-audio", {
+      body: { story_id: storyId },
+    });
+
+    if (!error && data?.signed_url) {
+      return data.signed_url;
+    }
+  } catch (invokeErr) {
+    console.warn("[Storage] get-story-audio invocation notice:", invokeErr);
+  }
+
+  // 2. Fallback to client-side signed URL if caller has access to the storage path
+  if (options?.storagePath) {
+    try {
+      const directUrl = await getSignedAudioPlaybackUrl(options.storagePath, 3600);
+      if (directUrl) return directUrl;
+    } catch {}
+  }
+
+  // 3. Fallback to provided fallback URL (e.g. local backend or demo audio)
+  return options?.fallbackUrl || null;
+}
