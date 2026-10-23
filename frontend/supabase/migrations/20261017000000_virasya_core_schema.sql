@@ -166,6 +166,22 @@ CREATE TRIGGER trigger_protect_profile_integrity
     FOR EACH ROW
     EXECUTE FUNCTION public.protect_profile_integrity();
 
+-- Safe, idempotent backfill for existing auth users into public.profiles
+-- Executes with migration runner (postgres/supabase_admin) privileges
+INSERT INTO public.profiles (id, email, full_name, display_name)
+SELECT 
+    u.id,
+    u.email,
+    COALESCE(u.raw_user_meta_data->>'full_name', ''),
+    COALESCE(
+        NULLIF(u.raw_user_meta_data->>'display_name', ''),
+        NULLIF(u.raw_user_meta_data->>'name', ''),
+        NULLIF(split_part(u.email, '@', 1), ''),
+        'Storyteller'
+    )
+FROM auth.users u
+ON CONFLICT (id) DO NOTHING;
+
 -- =============================================================================
 -- 4. STORIES TABLE
 -- Stores cultural narratives, voice recordings, dual transcripts, and provenance.
