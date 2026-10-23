@@ -1,3 +1,5 @@
+import { ComingSoonBadge } from "../../components/shared/Icons";
+
 export default function Trust() {
   return (
     <>
@@ -64,8 +66,9 @@ export default function Trust() {
               </p>
             </div>
           </div>
-          <a className="text-link trust-cta" href="#integrations">
+          <a className="text-link trust-cta" href="/culture-hosts">
             Explore Culture Hosts{" "}
+            <ComingSoonBadge text="Coming Soon" className="trust-soon-badge" />
             <span className="arrow" aria-hidden={true}>
               ↗
             </span>

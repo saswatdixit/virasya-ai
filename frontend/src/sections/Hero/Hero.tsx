@@ -1,3 +1,5 @@
+import { PreserveStoryIcon } from "../../components/shared/Icons";
+
 export default function Hero() {
   return (
     <>
@@ -16,7 +18,8 @@ export default function Hero() {
             </p>
             <div className="hero-actions">
               <button className="btn" data-start="Starter">
-                Preserve your story{" "}
+                <PreserveStoryIcon className="btn-preserve-icon" />
+                <span>Preserve your story</span>{" "}
                 <span className="arrow" aria-hidden={true}>
                   ↗
                 </span>

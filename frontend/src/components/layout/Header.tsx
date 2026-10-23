@@ -1,31 +1,11 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../../auth";
-
-const SearchIcon = () => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.6"
-    aria-hidden={true}
-  >
-    <circle cx="10.8" cy="10.8" r="6.3" />
-    <path d="m16 16 4.5 4.5" />
-  </svg>
-);
-
-const ProfileIcon = () => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    aria-hidden={true}
-  >
-    <circle cx="12" cy="8" r="3.2" />
-    <path d="M5.5 20c.8-3.5 3-5.3 6.5-5.3s5.7 1.8 6.5 5.3" />
-  </svg>
-);
+import {
+  SearchIcon,
+  ProfileIcon,
+  PreserveStoryIcon,
+  ComingSoonBadge,
+} from "../shared/Icons";
 
 export default function Header({
   placeholder = false,
@@ -85,24 +65,29 @@ export default function Header({
           <a href="/explore" className="nav-link">
             Explore
           </a>
-          <a href="/culture-hosts" className="nav-link">
+          <a href="/culture-hosts" className="nav-link nav-link-with-badge">
             Culture Hosts
+            <ComingSoonBadge text="Soon" compact />
           </a>
-          <a href="/private-vault" className="nav-link">
+          <a href="/private-vault" className="nav-link nav-link-with-badge">
             Private Vault
+            <ComingSoonBadge text="Soon" compact />
           </a>
           <a
-            className="nav-icon-btn nav-search"
+            className="nav-icon-btn nav-search nav-search-wrapper"
             href="/search"
-            aria-label="Search"
+            aria-label="Search (Coming Soon)"
+            title="Search (Coming Soon)"
           >
             <SearchIcon />
+            <span className="nav-search-soon">Soon</span>
           </a>
         </nav>
 
         <div className="header-right">
           <a className="btn nav-cta" href="/preserve-your-story">
-            Preserve Your Story{" "}
+            <PreserveStoryIcon className="btn-preserve-icon" />
+            <span>Preserve Your Story</span>
             <span className="arrow" aria-hidden={true}>
               ↗
             </span>
@@ -138,16 +123,30 @@ export default function Header({
           href="/search"
           onClick={() => setMobileOpen(false)}
         >
-          <SearchIcon /> Search
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <SearchIcon />
+            <span>Search</span>
+          </div>
+          <ComingSoonBadge text="Coming Soon" />
         </a>
         <a href="/explore" onClick={() => setMobileOpen(false)}>
           Explore
         </a>
-        <a href="/culture-hosts" onClick={() => setMobileOpen(false)}>
-          Culture Hosts
+        <a
+          href="/culture-hosts"
+          onClick={() => setMobileOpen(false)}
+          className="mobile-menu-row"
+        >
+          <span>Culture Hosts</span>
+          <ComingSoonBadge text="Coming Soon" />
         </a>
-        <a href="/private-vault" onClick={() => setMobileOpen(false)}>
-          Private Vault
+        <a
+          href="/private-vault"
+          onClick={() => setMobileOpen(false)}
+          className="mobile-menu-row"
+        >
+          <span>Private Vault</span>
+          <ComingSoonBadge text="Coming Soon" />
         </a>
         <button
           type="button"
@@ -166,7 +165,8 @@ export default function Header({
           href="/preserve-your-story"
           onClick={() => setMobileOpen(false)}
         >
-          Preserve Your Story{" "}
+          <PreserveStoryIcon className="btn-preserve-icon" />
+          <span>Preserve Your Story</span>
           <span className="arrow" aria-hidden={true}>
             ↗
           </span>

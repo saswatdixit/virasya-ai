@@ -13,27 +13,30 @@ import PreserveApp from "../preserve/PreserveApp";
 import ExplorePage from "../explore/ExplorePage";
 import { AuthProvider, AuthModal, useAuth } from "../auth";
 import ErrorBoundary from "../components/shared/ErrorBoundary";
+import { PreserveStoryIcon, CulturalHostIcon, SearchIcon } from "../components/shared/Icons";
 
 interface PlaceholderConfig {
   eyebrow?: string;
   badge?: string;
   title: string;
   desc: string;
-  icon?: string;
+  icon?: React.ReactNode;
 }
 
 const PLACEHOLDER_CONFIGS: Record<string, PlaceholderConfig> = {
   "/search": {
+    badge: "Coming Soon",
     eyebrow: "Sovereign Search",
     title: "Search the Living Archive",
-    desc: "Search across preserved oral histories, folklore recordings, and dialect lexicons.",
-    icon: "🔍",
+    desc: "Coming soon — an archival search engine across preserved oral histories, folklore recordings, and regional dialect lexicons.",
+    icon: <SearchIcon size={38} />,
   },
   "/culture-hosts": {
+    badge: "Coming Soon",
     eyebrow: "Living Heritage Custodians",
     title: "Culture Hosts & Guilds",
-    desc: "Connect with native cultural custodians, storytellers, and community archives.",
-    icon: "🏛",
+    desc: "Coming soon — connect with native cultural custodians, storytellers, and community archives across India.",
+    icon: <CulturalHostIcon size={38} />,
   },
   "/private-vault": {
     badge: "Coming Soon",
@@ -77,6 +80,7 @@ function PlaceholderPage({ path }: { path: string }) {
               Explore Stories
             </a>
             <a href="/preserve-your-story" className="placeholder-btn-preserve">
+              <PreserveStoryIcon className="btn-preserve-icon" />
               Preserve a Story →
             </a>
           </div>

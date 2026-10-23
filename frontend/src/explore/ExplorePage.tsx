@@ -9,6 +9,7 @@ import {
   type ExploreDetailStory,
 } from "../preserve/api";
 import { SAMPLE_EXPLORE_STORIES } from "./sampleStories";
+import { PreserveStoryIcon } from "../components/shared/Icons";
 
 const CATEGORIES = [
   "All",
@@ -182,6 +183,7 @@ export default function ExplorePage() {
                 </span>
               </div>
               <a href="/preserve-your-story" className="p-btn p-btn-brass">
+                <PreserveStoryIcon className="btn-preserve-icon" />
                 Preserve your story <span className="p-ar">↗</span>
               </a>
             </div>
@@ -273,6 +275,7 @@ export default function ExplorePage() {
                 Explore Preview Stories (Demo Mode) →
               </button>
               <a href="/preserve-your-story" className="p-btn p-btn-brass">
+                <PreserveStoryIcon className="btn-preserve-icon" />
                 Preserve a new story <span className="p-ar">↗</span>
               </a>
             </div>

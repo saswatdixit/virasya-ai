@@ -1,3 +1,5 @@
+import { PreserveStoryIcon, ComingSoonBadge } from "../../components/shared/Icons";
+
 export default function Closing() {
   return (
     <>
@@ -23,7 +25,8 @@ export default function Closing() {
               <br />Give them a place to live on.
             </p>
             <a className="btn" href="/preserve-your-story">
-              Preserve your story <span className="arrow">↗</span>
+              <PreserveStoryIcon className="btn-preserve-icon" />
+              <span>Preserve your story</span> <span className="arrow">↗</span>
             </a>
           </div>
         </div>
@@ -32,8 +35,12 @@ export default function Closing() {
             <p> Made With Love & Care </p>
             <div className="footer-top-links">
               <a href="/explore">Explore</a>
-              <a href="/culture-hosts">Culture Hosts</a>
-              <a href="/private-vault">Private Vault</a>
+              <a href="/culture-hosts">
+                Culture Hosts <ComingSoonBadge text="Soon" compact />
+              </a>
+              <a href="/private-vault">
+                Private Vault <ComingSoonBadge text="Soon" compact />
+              </a>
               <a href="#faq">Good questions</a>
             </div>
           </div>

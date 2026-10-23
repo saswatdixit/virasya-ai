@@ -3119,6 +3119,111 @@ header#header.placeholder-header,
   transform: translateY(-1px);
 }
 
+/* =============================================================================
+   Re-usable "Coming Soon" Badge and Preserve Story Logo / Icon
+   ============================================================================= */
+
+/* Reusable Coming Soon Badge */
+.badge-coming-soon {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  background: rgba(184, 93, 50, 0.09);
+  border: 1px solid rgba(184, 93, 50, 0.28);
+  border-radius: 12px;
+  color: var(--burnt);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.15;
+  white-space: nowrap;
+  pointer-events: none;
+  font-family: var(--sans);
+  transition: all 0.2s ease;
+  vertical-align: middle;
+}
+
+.badge-coming-soon.is-compact {
+  padding: 2px 6px;
+  font-size: 9px;
+  gap: 4px;
+}
+
+.badge-coming-soon-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--burnt);
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* Nav Item Badge Alignment */
+.nav-link-with-badge {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 7px;
+}
+
+.nav-search-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+}
+
+.nav-search-soon {
+  font-size: 9px;
+  padding: 2px 5px;
+  background: rgba(184, 93, 50, 0.1);
+  border: 1px solid rgba(184, 93, 50, 0.28);
+  border-radius: 10px;
+  color: var(--burnt);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.mobile-menu-row {
+  display: flex !important;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+/* Preserve a Story Button Icon */
+.btn-preserve-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  flex-shrink: 0;
+  stroke: currentColor;
+  vertical-align: middle;
+  transition: transform 0.2s ease;
+}
+
+.btn:hover .btn-preserve-icon,
+.p-btn:hover .btn-preserve-icon,
+.placeholder-btn-preserve:hover .btn-preserve-icon {
+  transform: translateY(-1px) scale(1.06);
+}
+
+.nav-cta {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.mobile-preserve {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 8px !important;
+}
+
 .hero-loading-status {
   position: absolute;
   inset: 35% 12% auto;
