@@ -2548,4 +2548,67 @@ pre.p-prov-json {
   flex-wrap: wrap;
 }
 
+/* =====================================================================
+   Step 1 Storyteller Identity Banner
+   ===================================================================== */
+.p-storyteller-banner {
+  margin-bottom: 20px;
+  padding: 10px 16px;
+  background: rgba(184, 93, 50, 0.08);
+  border: 1px solid rgba(184, 93, 50, 0.25);
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+.p-storyteller-banner-info {
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--v-ink);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.p-storyteller-banner-label {
+  color: var(--v-muted);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.p-storyteller-banner-name {
+  color: var(--v-ink);
+  font-weight: 700;
+}
+
+.p-storyteller-banner-action {
+  font-size: 12.5px;
+  font-family: var(--v-font-body);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: var(--v-terracotta);
+  padding: 0;
+  transition: color 0.2s ease, opacity 0.2s ease;
+  white-space: nowrap;
+}
+
+.p-storyteller-banner-action:hover:not(:disabled) {
+  color: #9c4c26;
+}
+
+.p-storyteller-banner-action.is-in-use {
+  opacity: 0.65;
+  cursor: default;
+  text-decoration: none;
+}
+
 

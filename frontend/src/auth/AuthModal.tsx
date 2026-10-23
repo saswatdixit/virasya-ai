@@ -208,13 +208,6 @@ export default function AuthModal() {
         ×
       </button>
 
-      <span className="mark dialog-mark" aria-hidden="true">
-        <i></i>
-        <i></i>
-        <i></i>
-        <i></i>
-      </span>
-
       {/* 1. AUTHENTICATED STATE */}
       {user ? (
         <div className="auth-signed-in">

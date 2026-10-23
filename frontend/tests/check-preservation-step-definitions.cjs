@@ -26,7 +26,7 @@ assert(vocabContent.includes("Continue to Punctuation Review"), "Vocabulary page
 
 // Verify Page5Punctuation features
 const punctContent = fs.readFileSync("src/preserve/pages/Page5Punctuation.tsx", "utf8");
-assert(punctContent.includes("05 / PUNCTUATION & CADENCE"), "Page5Punctuation must have correct eyebrow");
+assert(punctContent.includes("05 / PUNCTUATION REVIEW"), "Page5Punctuation must have correct eyebrow");
 assert(punctContent.includes("Odia Punctuation Editor"), "Page5Punctuation must contain editor");
 assert(punctContent.includes("Purna Virama (Danda)"), "Page5Punctuation must provide Danda insertion");
 assert(punctContent.includes("goToStep(4)"), "Page5Punctuation must allow navigating back to Vocabulary");

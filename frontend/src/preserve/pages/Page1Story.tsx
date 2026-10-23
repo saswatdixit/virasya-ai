@@ -13,6 +13,20 @@ export default function Page1Story() {
   const { user, profile } = useAuth();
   const f = state.form;
 
+  const storytellerDisplayName =
+    profile?.display_name?.trim() ||
+    profile?.full_name?.trim() ||
+    (user?.email ? user.email.split("@")[0] : "") ||
+    "Storyteller";
+
+  const isInUse = Boolean(storytellerDisplayName && f.carrier.trim() === storytellerDisplayName);
+
+  const handleUseAsStoryteller = () => {
+    if (storytellerDisplayName && f.carrier.trim() !== storytellerDisplayName) {
+      updateForm("carrier", storytellerDisplayName);
+    }
+  };
+
   const [touched, setTouched] = useState(false);
 
   const errors: Record<string, string> = {};
@@ -71,41 +85,23 @@ export default function Page1Story() {
       <div className="p-wrap p-form-workspace">
         <form onSubmit={handleContinue} noValidate>
           {user && (
-            <div
-              style={{
-                marginBottom: 20,
-                padding: "10px 16px",
-                background: "rgba(184, 93, 50, 0.08)",
-                border: "1px solid rgba(184, 93, 50, 0.25)",
-                borderRadius: 6,
-                fontSize: 13,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: 8,
-              }}
-            >
-              <span>
-                Preserving as: <strong>{profile?.display_name || user.email?.split("@")[0] || "Archivist"}</strong>
+            <div className="p-storyteller-banner">
+              <span className="p-storyteller-banner-info">
+                <span className="p-storyteller-banner-label">Storyteller name:</span>{" "}
+                <strong className="p-storyteller-banner-name">{storytellerDisplayName}</strong>
               </span>
-              {!f.carrier && (
-                <button
-                  type="button"
-                  style={{
-                    fontSize: 12,
-                    textDecoration: "underline",
-                    cursor: "pointer",
-                    background: "none",
-                    border: "none",
-                    color: "var(--v-brown)",
-                    padding: 0,
-                  }}
-                  onClick={() => updateForm("carrier", profile?.display_name || user.email?.split("@")[0] || "Storyteller")}
-                >
-                  Use my name as storyteller →
-                </button>
-              )}
+              <button
+                type="button"
+                className={`p-storyteller-banner-action ${isInUse ? "is-in-use" : ""}`}
+                onClick={handleUseAsStoryteller}
+                title={
+                  isInUse
+                    ? "Currently set as storyteller"
+                    : "Fill storyteller input with this name"
+                }
+              >
+                Use as storyteller →
+              </button>
             </div>
           )}
           <div className="p-grid-two">

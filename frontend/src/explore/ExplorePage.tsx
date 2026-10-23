@@ -589,7 +589,7 @@ export default function ExplorePage() {
                 <section style={{ marginBottom: 32, borderTop: "1px solid var(--v-line2)", paddingTop: 24 }}>
                   <div className="p-eyebrow">ARCHIVAL PROVENANCE & AUTHENTICITY</div>
                   <p className="p-small" style={{ margin: "4px 0 16px", color: "var(--v-text-sub)" }}>
-                    Preserved with sovereign dual-model verification and curated cultural vocabulary.
+                    Preserved through the GNANI AI transcription pipeline, with storyteller review and cultural context.
                   </p>
 
                   <div style={{ display: "grid", gap: 10, background: "var(--v-field)", padding: "16px 20px", borderRadius: 4, border: "1px solid var(--v-line)" }}>
@@ -615,12 +615,12 @@ export default function ExplorePage() {
 
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, fontSize: 13 }}>
                       <span style={{ color: "var(--v-text-sub)" }}>Oral Preservation Pipeline</span>
-                      <span>{detailStory.audio ? "Vaani + IndicConformer Dual ASR" : "Direct Script Preservation"}</span>
+                      <span>{detailStory.audio ? "GNANI AI Speech-to-Text" : "Direct Script Preservation"}</span>
                     </div>
 
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, fontSize: 13 }}>
-                      <span style={{ color: "var(--v-text-sub)" }}>Cadence & Punctuation</span>
-                      <span>Horizon-Labs Neural Odia Punctuation (Editorial Verified)</span>
+                      <span style={{ color: "var(--v-text-sub)" }}>Punctuation & Editorial Review</span>
+                      <span>Manual punctuation and transcript review (AI punctuation model coming soon)</span>
                     </div>
                   </div>
                 </section>

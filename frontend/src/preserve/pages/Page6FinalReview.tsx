@@ -114,7 +114,7 @@ export default function Page6FinalReview() {
               </div>
               <div className="p-success-meta-item">
                 <span className="p-side-label">Punctuation Review</span>
-                <span>{punct.manual !== null ? "Editorial punctuation verified" : "Original oral rhythm preserved"}</span>
+                <span>Manual punctuation and transcript review (AI punctuation model coming soon)</span>
               </div>
               <div className="p-success-meta-item">
                 <span className="p-side-label">Archive Visibility</span>
