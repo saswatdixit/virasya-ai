@@ -4,7 +4,6 @@ import {
   SearchIcon,
   ProfileIcon,
   PreserveStoryIcon,
-  ComingSoonBadge,
 } from "../shared/Icons";
 
 export default function Header({
@@ -65,22 +64,19 @@ export default function Header({
           <a href="/explore" className="nav-link">
             Explore
           </a>
-          <a href="/culture-hosts" className="nav-link nav-link-with-badge">
+          <a href="/culture-hosts" className="nav-link">
             Culture Hosts
-            <ComingSoonBadge text="Soon" compact />
           </a>
-          <a href="/private-vault" className="nav-link nav-link-with-badge">
+          <a href="/private-vault" className="nav-link">
             Private Vault
-            <ComingSoonBadge text="Soon" compact />
           </a>
           <a
-            className="nav-icon-btn nav-search nav-search-wrapper"
+            className="nav-icon-btn nav-search"
             href="/search"
-            aria-label="Search (Coming Soon)"
-            title="Search (Coming Soon)"
+            aria-label="Search"
+            title="Search"
           >
             <SearchIcon />
-            <span className="nav-search-soon">Soon</span>
           </a>
         </nav>
 
@@ -123,11 +119,7 @@ export default function Header({
           href="/search"
           onClick={() => setMobileOpen(false)}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <SearchIcon />
-            <span>Search</span>
-          </div>
-          <ComingSoonBadge text="Coming Soon" />
+          <SearchIcon /> Search
         </a>
         <a href="/explore" onClick={() => setMobileOpen(false)}>
           Explore
@@ -135,18 +127,14 @@ export default function Header({
         <a
           href="/culture-hosts"
           onClick={() => setMobileOpen(false)}
-          className="mobile-menu-row"
         >
-          <span>Culture Hosts</span>
-          <ComingSoonBadge text="Coming Soon" />
+          Culture Hosts
         </a>
         <a
           href="/private-vault"
           onClick={() => setMobileOpen(false)}
-          className="mobile-menu-row"
         >
-          <span>Private Vault</span>
-          <ComingSoonBadge text="Coming Soon" />
+          Private Vault
         </a>
         <button
           type="button"
