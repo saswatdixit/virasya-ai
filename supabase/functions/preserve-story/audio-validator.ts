@@ -2,9 +2,15 @@
  * Server-Side Audio Container and Duration Validator
  *
  * Enforces:
- * 1. Strict file size bounds: (0, 5 MiB] (5,242,880 bytes).
+ * 1. Strict file size bounds: (0, 5 MiB] (5,242,880 bytes) before parsing.
  * 2. Magic-byte container format verification (rejects renamed binaries or arbitrary payloads).
- * 3. Deep structural frame/chunk parsing to determine actual audio duration directly from container data.
+ * 3. Deep structural frame/chunk parsing to determine actual audio duration directly from container data:
+ *    - WebM: Validates Cluster timestamps and block timing; rejects if clusters contradict Info.Duration or exceed 60s.
+ *    - OGG: Sequentially parses OggS pages, tracks serial number, enforces monotonic granule progress, prevents trailing page spoofing.
+ *    - MP3: Scans MPEG-1, MPEG-2, and MPEG-2.5 Layer III frame headers; rejects files where frames exceed Xing header claims or 60s.
+ *    - M4A: Inspects mvhd, mdhd, and stts sample tables; rejects short declared durations with oversized media payloads.
+ *    - WAV: Verifies RIFF/RF64 structure, format tag (PCM/Float only), byteRate, dataSize, and rejects unallocated trailing payloads.
+ *    - FLAC: Validates STREAMINFO and cross-checks sample counts against file payload boundaries.
  * 4. Strict duration bounds: (0, 60.0] seconds.
  * 5. Fail-closed on corrupted, truncated, malformed, or unparsable audio.
  *
@@ -51,6 +57,7 @@ export function validateAudioBuffer(buffer: Uint8Array, fileExtension = ""): Aud
     };
   }
 
+  // Pre-parsing memory & size boundary gate
   if (byteSize > MAX_AUDIO_BYTES) {
     return {
       valid: false,
@@ -62,8 +69,12 @@ export function validateAudioBuffer(buffer: Uint8Array, fileExtension = ""): Aud
 
   const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 
-  // 1. WAV (RIFF WAVE)
-  if (byteSize >= 12 && readAscii(buffer, 0, 4) === "RIFF" && readAscii(buffer, 8, 4) === "WAVE") {
+  // 1. WAV (RIFF WAVE / RF64)
+  if (
+    byteSize >= 12 &&
+    (readAscii(buffer, 0, 4) === "RIFF" || readAscii(buffer, 0, 4) === "RF64") &&
+    readAscii(buffer, 8, 4) === "WAVE"
+  ) {
     return parseWav(buffer, view, byteSize);
   }
 
@@ -114,12 +125,33 @@ export function validateAudioBuffer(buffer: Uint8Array, fileExtension = ""): Aud
 // -----------------------------------------------------------------------------
 
 function parseWav(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
+  if (byteSize < 44) {
+    return {
+      valid: false,
+      code: "MALFORMED_AUDIO_HEADER",
+      error: "WAV file is truncated (smaller than minimum 44-byte RIFF header).",
+      byteSize,
+    };
+  }
+
+  const riffSize = view.getUint32(4, true);
+  if (byteSize < riffSize + 8) {
+    return {
+      valid: false,
+      code: "MALFORMED_AUDIO_HEADER",
+      error: "WAV file is truncated according to RIFF header.",
+      byteSize,
+    };
+  }
+
   let offset = 12;
   let sampleRate = 0;
   let byteRate = 0;
   let channels = 0;
   let bitsPerSample = 0;
+  let formatTag = 0;
   let dataSize = 0;
+  let dataOffset = 0;
   let foundFmt = false;
   let foundData = false;
 
@@ -137,6 +169,7 @@ function parseWav(buffer: Uint8Array, view: DataView, byteSize: number): AudioVa
           byteSize,
         };
       }
+      formatTag = view.getUint16(chunkDataOffset, true);
       channels = view.getUint16(chunkDataOffset + 2, true);
       sampleRate = view.getUint32(chunkDataOffset + 4, true);
       byteRate = view.getUint32(chunkDataOffset + 8, true);
@@ -144,17 +177,14 @@ function parseWav(buffer: Uint8Array, view: DataView, byteSize: number): AudioVa
       foundFmt = true;
     } else if (chunkId === "data") {
       dataSize = chunkSize;
+      dataOffset = chunkDataOffset;
       foundData = true;
-      // If dataSize is 0xFFFFFFFF or malformed, clip to available payload
-      const availableData = byteSize - chunkDataOffset;
-      if (dataSize > availableData) {
-        dataSize = availableData;
-      }
-      break;
+      offset += 8 + chunkSize;
+      if (chunkSize % 2 !== 0) offset += 1;
+      continue;
     }
 
     offset += 8 + chunkSize;
-    // Chunks in RIFF are word-aligned (2-byte aligned)
     if (chunkSize % 2 !== 0) offset += 1;
   }
 
@@ -163,6 +193,16 @@ function parseWav(buffer: Uint8Array, view: DataView, byteSize: number): AudioVa
       valid: false,
       code: "MALFORMED_AUDIO_HEADER",
       error: "WAV file does not contain valid audio format specification.",
+      byteSize,
+    };
+  }
+
+  // Format code: 1 = PCM, 3 = IEEE Float, 0xFFFE = Extensible
+  if (formatTag !== 1 && formatTag !== 3 && formatTag !== 0xfffe) {
+    return {
+      valid: false,
+      code: "UNRECOGNIZED_CONTAINER",
+      error: `Unsupported compressed WAV format code (0x${formatTag.toString(16)}). Only uncompressed PCM/Float WAV is permitted.`,
       byteSize,
     };
   }
@@ -176,162 +216,348 @@ function parseWav(buffer: Uint8Array, view: DataView, byteSize: number): AudioVa
     };
   }
 
-  // Derive mathematical byteRate from sampleRate, channels, bitsPerSample to prevent forged rate
   const derivedByteRate = sampleRate * channels * Math.max(1, Math.floor(bitsPerSample / 8));
   if (byteRate <= 0 || Math.abs(byteRate - derivedByteRate) > derivedByteRate * 0.1) {
     byteRate = derivedByteRate;
   }
 
-  const duration = dataSize / byteRate;
-  return checkDuration(duration, "wav", byteSize);
-}
-
-function parseFlac(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
-  // STREAMINFO is the first metadata block right after 'fLaC' (offset 4)
-  const isLast = (buffer[4] & 0x80) !== 0;
-  const blockType = buffer[4] & 0x7f;
-  const blockLength = (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
-
-  if (blockType !== 0 || blockLength < 34 || 8 + blockLength > byteSize) {
+  // Cross-check dataSize against available buffer payload
+  const availablePayload = byteSize - dataOffset;
+  if (dataSize > availablePayload) {
     return {
       valid: false,
       code: "MALFORMED_AUDIO_HEADER",
-      error: "FLAC STREAMINFO block is corrupt or missing.",
+      error: "WAV data chunk claims more bytes than available in file payload.",
       byteSize,
     };
   }
 
-  // STREAMINFO payload starts at offset 8:
-  // bytes 10-17 of payload (offset 18-25 in file):
-  // sample_rate (20 bits), channels (3 bits), bits_per_sample (5 bits), total_samples (36 bits)
-  const b0 = buffer[18];
-  const b1 = buffer[19];
-  const b2 = buffer[20];
-  const sampleRate = (b0 << 12) | (b1 << 4) | (b2 >> 4);
+  // Adversarial check: Check if there is significant unexplained payload after data chunk
+  // (e.g. claiming dataSize = 32000 (1s) while 4 MB of audio payload exists)
+  const remainingBytes = byteSize - (dataOffset + dataSize);
+  const durationFromData = dataSize / byteRate;
+  const maxPossibleDuration = availablePayload / byteRate;
 
-  const b3 = buffer[21];
-  const b4 = buffer[22];
-  const b5 = buffer[23];
-  const b6 = buffer[24];
-  const b7 = buffer[25];
-
-  // total_samples is bottom 4 bits of b2 + b3..b7 (36 bits)
-  const top4Bits = b2 & 0x0f;
-  const totalSamples =
-    top4Bits * 2 ** 32 +
-    (b3 * 2 ** 24 + b4 * 2 ** 16 + b5 * 2 ** 8 + b6) +
-    b7 / 256;
-
-  if (sampleRate <= 0 || totalSamples <= 0) {
+  // If available audio payload exceeds 60 seconds, even if dataSize claims <= 60s
+  if (maxPossibleDuration > MAX_AUDIO_DURATION_SECONDS && remainingBytes > 1024) {
     return {
       valid: false,
-      code: "AUDIO_DURATION_UNVERIFIABLE",
-      error: "FLAC header does not specify valid sample rate or sample count.",
+      code: "AUDIO_TOO_LONG",
+      error: `WAV file payload (${maxPossibleDuration.toFixed(1)}s potential audio) exceeds the 60-second limit.`,
       byteSize,
     };
   }
 
-  const duration = totalSamples / sampleRate;
-  return checkDuration(duration, "flac", byteSize);
+  return checkDuration(durationFromData, "wav", byteSize);
 }
 
 function parseOgg(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
-  // Detect codec and sample rate from initial pages
-  let sampleRate = 48000; // Default standard for Opus
-  let isVorbis = false;
+  // Parse OGG pages sequentially from offset 0 to prevent spoofed trailing pages
+  let offset = 0;
+  let targetSerial: number | null = null;
+  let sampleRate = 48000; // default for Opus
+  let maxGranule = -1;
+  let lastSeq = -1;
+  let pageCount = 0;
 
-  // Check first packet in first page
-  // Page header is 27 bytes + N segments
-  const numSegments = buffer[26];
-  let firstPacketOffset = 27 + numSegments;
-
-  if (firstPacketOffset + 8 <= byteSize) {
-    const packetSig = readAscii(buffer, firstPacketOffset, 8);
-    if (packetSig.startsWith("OpusHead")) {
-      sampleRate = 48000;
-    } else if (packetSig.startsWith("\x01vorbis")) {
-      isVorbis = true;
-      if (firstPacketOffset + 16 <= byteSize) {
-        sampleRate = view.getUint32(firstPacketOffset + 12, true);
-      }
-    }
-  }
-
-  // To find the total stream duration, locate the final Ogg page granule position.
-  // We scan backwards from the end of the file for the capture pattern "OggS" (0x4F 0x67 0x67 0x53).
-  let lastGranule = -1;
-  const searchLimit = Math.max(0, byteSize - 65536); // search last 64 KB
-
-  for (let i = byteSize - 14; i >= searchLimit; i--) {
+  while (offset + 27 <= byteSize) {
     if (
-      buffer[i] === 0x4f &&
-      buffer[i + 1] === 0x67 &&
-      buffer[i + 2] === 0x67 &&
-      buffer[i + 3] === 0x53
+      buffer[offset] !== 0x4f ||
+      buffer[offset + 1] !== 0x67 ||
+      buffer[offset + 2] !== 0x67 ||
+      buffer[offset + 3] !== 0x53
     ) {
-      // Found an OggS page header
-      // Granule position is an 8-byte little-endian int at offset + 6
-      const low = view.getUint32(i + 6, true);
-      const high = view.getUint32(i + 10, true);
-      // If granule position is not -1 (0xFFFFFFFF 0xFFFFFFFF)
-      if (low !== 0xffffffff || high !== 0xffffffff) {
-        const granule = high * 2 ** 32 + low;
-        if (granule > 0) {
-          lastGranule = granule;
-          break;
+      if (pageCount > 0) {
+        break; // Reached end of valid Ogg stream pages
+      }
+      return {
+        valid: false,
+        code: "MALFORMED_AUDIO_HEADER",
+        error: "Invalid OGG page header signature.",
+        byteSize,
+      };
+    }
+
+    const lowGranule = view.getUint32(offset + 6, true);
+    const highGranule = view.getUint32(offset + 10, true);
+    const pageSerial = view.getUint32(offset + 14, true);
+    const seqNum = view.getUint32(offset + 18, true);
+    const numSegments = buffer[offset + 26];
+
+    if (offset + 27 + numSegments > byteSize) {
+      return {
+        valid: false,
+        code: "MALFORMED_AUDIO_HEADER",
+        error: "Truncated OGG page segment table.",
+        byteSize,
+      };
+    }
+
+    let pageDataLength = 0;
+    for (let s = 0; s < numSegments; s++) {
+      pageDataLength += buffer[offset + 27 + s];
+    }
+
+    const pageTotalLength = 27 + numSegments + pageDataLength;
+    if (offset + pageTotalLength > byteSize) {
+      return {
+        valid: false,
+        code: "MALFORMED_AUDIO_HEADER",
+        error: "OGG page data truncated.",
+        byteSize,
+      };
+    }
+
+    const pageDataOffset = offset + 27 + numSegments;
+
+    // First page initialization
+    if (targetSerial === null) {
+      targetSerial = pageSerial;
+      if (pageDataLength >= 8) {
+        const sig = readAscii(buffer, pageDataOffset, 8);
+        if (sig.startsWith("OpusHead")) {
+          sampleRate = 48000;
+        } else if (sig.startsWith("\x01vorbis")) {
+          if (pageDataLength >= 16) {
+            sampleRate = view.getUint32(pageDataOffset + 12, true);
+          }
         }
       }
     }
+
+    // Process page for target audio stream
+    if (pageSerial === targetSerial) {
+      pageCount++;
+      if (lastSeq !== -1 && seqNum < lastSeq) {
+        return {
+          valid: false,
+          code: "MALFORMED_AUDIO_HEADER",
+          error: "Non-monotonic OGG page sequence number detected.",
+          byteSize,
+        };
+      }
+      lastSeq = seqNum;
+
+      if (lowGranule !== 0xffffffff || highGranule !== 0xffffffff) {
+        const granule = highGranule * 2 ** 32 + lowGranule;
+        if (granule > maxGranule) {
+          maxGranule = granule;
+          const currentDur = maxGranule / sampleRate;
+          if (currentDur > MAX_AUDIO_DURATION_SECONDS) {
+            return {
+              valid: false,
+              code: "AUDIO_TOO_LONG",
+              error: `Audio duration (${currentDur.toFixed(1)}s) exceeds the maximum limit of 60 seconds.`,
+              byteSize,
+            };
+          }
+        }
+      }
+    }
+
+    offset += pageTotalLength;
   }
 
-  if (lastGranule <= 0 || sampleRate <= 0) {
+  if (maxGranule <= 0 || sampleRate <= 0 || pageCount === 0) {
     return {
       valid: false,
       code: "AUDIO_DURATION_UNVERIFIABLE",
-      error: "Unable to verify Ogg stream granule duration.",
+      error: "Unable to verify OGG stream duration from valid sequential pages.",
       byteSize,
     };
   }
 
-  const duration = lastGranule / sampleRate;
+  const duration = maxGranule / sampleRate;
   return checkDuration(duration, "ogg", byteSize);
 }
 
-function parseM4a(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
-  // ISO BMFF / QuickTime container (M4A / AAC)
+function parseMp3(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
   let offset = 0;
-  let duration = -1;
+
+  // Skip ID3v2 tag
+  if (byteSize >= 10 && readAscii(buffer, 0, 3) === "ID3") {
+    const tagSize =
+      ((buffer[6] & 0x7f) << 21) |
+      ((buffer[7] & 0x7f) << 14) |
+      ((buffer[8] & 0x7f) << 7) |
+      (buffer[9] & 0x7f);
+    offset = 10 + tagSize;
+  }
+
+  let totalValidFrames = 0;
+  let totalSamples = 0;
+  let primarySampleRate = 0;
+  let scanOffset = offset;
+  let claimedXingFrames: number | null = null;
+
+  // Bitrate tables (kbps) for Layer III
+  const bitrateTableV1L3 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0];
+  const bitrateTableV2L3 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0];
+
+  const sampleRateTableV1 = [44100, 48000, 32000];
+  const sampleRateTableV2 = [22050, 24000, 16000];
+  const sampleRateTableV25 = [11025, 12000, 8000];
+
+  while (scanOffset + 4 <= byteSize) {
+    if (!isMpegFrameSync(buffer, scanOffset)) {
+      scanOffset++;
+      continue;
+    }
+
+    const h1 = buffer[scanOffset + 1];
+    const h2 = buffer[scanOffset + 2];
+    const h3 = buffer[scanOffset + 3];
+
+    const versionBits = (h1 >> 3) & 0x03; // 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5
+    const layerBits = (h1 >> 1) & 0x03; // 1 = Layer III
+    const brIdx = (h2 >> 4) & 0x0f;
+    const srIdx = (h2 >> 2) & 0x03;
+    const pad = (h2 >> 1) & 0x01;
+    const channelMode = (h3 >> 6) & 0x03;
+    const isMono = channelMode === 3;
+
+    if (layerBits !== 1 || versionBits === 1 || brIdx === 0 || brIdx === 15 || srIdx === 3) {
+      scanOffset++;
+      continue;
+    }
+
+    let curSampleRate = 44100;
+    let bitrate = 0;
+    let samplesPerFrame = 1152;
+    let frameLen = 0;
+
+    if (versionBits === 3) {
+      curSampleRate = sampleRateTableV1[srIdx];
+      bitrate = bitrateTableV1L3[brIdx] * 1000;
+      samplesPerFrame = 1152;
+      frameLen = Math.floor((144 * bitrate) / curSampleRate) + pad;
+    } else {
+      curSampleRate = versionBits === 2 ? sampleRateTableV2[srIdx] : sampleRateTableV25[srIdx];
+      bitrate = bitrateTableV2L3[brIdx] * 1000;
+      samplesPerFrame = 576;
+      frameLen = Math.floor((72 * bitrate) / curSampleRate) + pad;
+    }
+
+    if (frameLen <= 4) {
+      scanOffset++;
+      continue;
+    }
+
+    if (primarySampleRate === 0) {
+      primarySampleRate = curSampleRate;
+
+      // Check first frame for Xing / Info header
+      const xingOffset = scanOffset + (versionBits === 3 ? (isMono ? 21 : 36) : isMono ? 13 : 21);
+      if (xingOffset + 12 <= byteSize) {
+        const tag = readAscii(buffer, xingOffset, 4);
+        if (tag === "Xing" || tag === "Info") {
+          const flags = view.getUint32(xingOffset + 4, false);
+          if ((flags & 0x01) !== 0) {
+            claimedXingFrames = view.getUint32(xingOffset + 8, false);
+          }
+        }
+      }
+    }
+
+    totalValidFrames++;
+    totalSamples += samplesPerFrame;
+
+    const accumulatedDuration = totalSamples / curSampleRate;
+    if (accumulatedDuration > MAX_AUDIO_DURATION_SECONDS) {
+      return {
+        valid: false,
+        code: "AUDIO_TOO_LONG",
+        error: `Audio duration (${accumulatedDuration.toFixed(1)}s) exceeds the maximum limit of 60 seconds.`,
+        byteSize,
+      };
+    }
+
+    scanOffset += frameLen;
+  }
+
+  if (totalValidFrames < 2 || primarySampleRate === 0) {
+    return {
+      valid: false,
+      code: "AUDIO_DURATION_UNVERIFIABLE",
+      error: "Unable to verify valid MPEG audio frame sequence in MP3 file.",
+      byteSize,
+    };
+  }
+
+  // Cross-check claimed Xing header frames against actual frames found in stream
+  if (claimedXingFrames !== null && claimedXingFrames > 0) {
+    if (totalValidFrames > claimedXingFrames + 10) {
+      return {
+        valid: false,
+        code: "MALFORMED_AUDIO_HEADER",
+        error: `MP3 stream frame count (${totalValidFrames}) contradicts Xing header metadata (${claimedXingFrames} frames); hidden audio detected.`,
+        byteSize,
+      };
+    }
+  }
+
+  const duration = totalSamples / primarySampleRate;
+  return checkDuration(duration, "mp3", byteSize);
+}
+
+function parseM4a(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
+  let offset = 0;
+  let movieDuration = -1;
+  let trackDuration = -1;
+  let sttsDuration = -1;
+  let mdatSize = 0;
 
   while (offset + 8 <= byteSize) {
     const boxSize = view.getUint32(offset, false);
     const boxType = readAscii(buffer, offset + 4, 4);
 
-    if (boxSize < 8 || offset + boxSize > byteSize + 8) {
-      break;
-    }
+    if (boxSize < 8 || offset + boxSize > byteSize + 8) break;
 
     if (boxType === "moov") {
-      duration = parseMoov(buffer, view, offset + 8, offset + boxSize);
-      break;
+      const moovRes = parseMoovBoxes(buffer, view, offset + 8, Math.min(offset + boxSize, byteSize));
+      movieDuration = moovRes.movieDuration;
+      trackDuration = moovRes.trackDuration;
+      sttsDuration = moovRes.sttsDuration;
+    } else if (boxType === "mdat") {
+      mdatSize += boxSize;
     }
 
     offset += boxSize;
   }
 
-  if (duration <= 0) {
+  const effectiveDuration = Math.max(movieDuration, trackDuration, sttsDuration);
+  if (effectiveDuration <= 0) {
     return {
       valid: false,
       code: "AUDIO_DURATION_UNVERIFIABLE",
-      error: "Could not find valid 'moov' / 'mvhd' duration box in M4A container.",
+      error: "Could not find valid 'moov' / 'mvhd' / 'mdhd' duration box in M4A container.",
       byteSize,
     };
   }
 
-  return checkDuration(duration, "m4a", byteSize);
+  // Cross-check media data size (mdat)
+  if (mdatSize > 2.5 * 1024 * 1024 && effectiveDuration <= 15.0) {
+    return {
+      valid: false,
+      code: "MALFORMED_AUDIO_HEADER",
+      error: "M4A audio media payload size contradicts claimed duration metadata.",
+      byteSize,
+    };
+  }
+
+  return checkDuration(effectiveDuration, "m4a", byteSize);
 }
 
-function parseMoov(buffer: Uint8Array, view: DataView, start: number, end: number): number {
+function parseMoovBoxes(
+  buffer: Uint8Array,
+  view: DataView,
+  start: number,
+  end: number
+): { movieDuration: number; trackDuration: number; sttsDuration: number } {
   let offset = start;
+  let movieDuration = -1;
+  let trackDuration = -1;
+  let sttsDuration = -1;
 
   while (offset + 8 <= end) {
     const boxSize = view.getUint32(offset, false);
@@ -355,19 +581,110 @@ function parseMoov(buffer: Uint8Array, view: DataView, start: number, end: numbe
       }
 
       if (timescale > 0 && dur > 0) {
-        return dur / timescale;
+        movieDuration = dur / timescale;
+      }
+    } else if (boxType === "trak") {
+      const trakRes = parseTrakBox(buffer, view, offset + 8, offset + boxSize);
+      if (trakRes.trackDuration > trackDuration) trackDuration = trakRes.trackDuration;
+      if (trakRes.sttsDuration > sttsDuration) sttsDuration = trakRes.sttsDuration;
+    }
+
+    offset += boxSize;
+  }
+
+  return { movieDuration, trackDuration, sttsDuration };
+}
+
+function parseTrakBox(
+  buffer: Uint8Array,
+  view: DataView,
+  start: number,
+  end: number
+): { trackDuration: number; sttsDuration: number } {
+  let offset = start;
+  let trackDuration = -1;
+  let sttsDuration = -1;
+
+  while (offset + 8 <= end) {
+    const boxSize = view.getUint32(offset, false);
+    const boxType = readAscii(buffer, offset + 4, 4);
+
+    if (boxSize < 8 || offset + boxSize > end) break;
+
+    if (boxType === "mdia") {
+      let mdiaOff = offset + 8;
+      let timescale = 0;
+
+      while (mdiaOff + 8 <= offset + boxSize) {
+        const subSize = view.getUint32(mdiaOff, false);
+        const subType = readAscii(buffer, mdiaOff + 4, 4);
+
+        if (subSize < 8 || mdiaOff + subSize > offset + boxSize) break;
+
+        if (subType === "mdhd") {
+          const version = buffer[mdiaOff + 8];
+          let dur = 0;
+          if (version === 0 && mdiaOff + 24 <= offset + boxSize) {
+            timescale = view.getUint32(mdiaOff + 20, false);
+            dur = view.getUint32(mdiaOff + 24, false);
+          } else if (version === 1 && mdiaOff + 32 <= offset + boxSize) {
+            timescale = view.getUint32(mdiaOff + 28, false);
+            const high = view.getUint32(mdiaOff + 32, false);
+            const low = view.getUint32(mdiaOff + 36, false);
+            dur = high * 2 ** 32 + low;
+          }
+          if (timescale > 0 && dur > 0) {
+            trackDuration = dur / timescale;
+          }
+        } else if (subType === "minf") {
+          // Look for stbl -> stts
+          let minfOff = mdiaOff + 8;
+          while (minfOff + 8 <= mdiaOff + subSize) {
+            const stblSize = view.getUint32(minfOff, false);
+            const stblType = readAscii(buffer, minfOff + 4, 4);
+            if (stblSize < 8 || minfOff + stblSize > mdiaOff + subSize) break;
+
+            if (stblType === "stbl") {
+              let sOff = minfOff + 8;
+              while (sOff + 8 <= minfOff + stblSize) {
+                const sSize = view.getUint32(sOff, false);
+                const sType = readAscii(buffer, sOff + 4, 4);
+                if (sSize < 8 || sOff + sSize > minfOff + stblSize) break;
+
+                if (sType === "stts" && timescale > 0) {
+                  // stts box: 4 bytes version/flags, 4 bytes entry count
+                  const entryCount = view.getUint32(sOff + 12, false);
+                  let totalSampleCount = 0;
+                  for (let e = 0; e < Math.min(entryCount, 1000); e++) {
+                    const eOff = sOff + 16 + e * 8;
+                    if (eOff + 8 <= sOff + sSize) {
+                      const sampleCount = view.getUint32(eOff, false);
+                      const sampleDelta = view.getUint32(eOff + 4, false);
+                      totalSampleCount += sampleCount * sampleDelta;
+                    }
+                  }
+                  if (totalSampleCount > 0) {
+                    sttsDuration = totalSampleCount / timescale;
+                  }
+                }
+                sOff += sSize;
+              }
+            }
+            minfOff += stblSize;
+          }
+        }
+
+        mdiaOff += subSize;
       }
     }
 
     offset += boxSize;
   }
 
-  return -1;
+  return { trackDuration, sttsDuration };
 }
 
 function parseWebM(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
-  // EBML Matroska / WebM parser
-  // Look for Segment (0x18538067) -> Info (0x1549A966) -> Duration (0x4489)
   let offset = 0;
 
   // Skip EBML Header
@@ -385,8 +702,8 @@ function parseWebM(buffer: Uint8Array, view: DataView, byteSize: number): AudioV
   offset += headerSize.len + Number(headerSize.val);
 
   let timestampScale = 1000000; // default 1 ms (1,000,000 ns)
-  let containerDurationSec = -1;
-  let maxClusterTimestamp = -1;
+  let declaredDurationSec = -1;
+  let maxObservedTimestamp = -1;
 
   while (offset + 4 <= byteSize) {
     const el = readEbmlId(buffer, offset);
@@ -399,11 +716,10 @@ function parseWebM(buffer: Uint8Array, view: DataView, byteSize: number): AudioV
 
     // Segment (0x18538067)
     if (el.id === 0x18538067) {
-      // Continue parsing inside Segment
       continue;
     }
 
-    // Info (0x1549A966) inside Segment
+    // Info (0x1549A966)
     if (el.id === 0x1549a966) {
       const infoEnd = Math.min(offset + contentLen, byteSize);
       let infoOff = offset;
@@ -417,23 +733,17 @@ function parseWebM(buffer: Uint8Array, view: DataView, byteSize: number): AudioV
         const valLen = Number(infoSize.val);
 
         if (infoEl.id === 0x2ad7b1) {
-          // TimestampScale
           if (valLen === 4) timestampScale = view.getUint32(infoOff, false);
           else if (valLen === 2) timestampScale = view.getUint16(infoOff, false);
         } else if (infoEl.id === 0x4489) {
-          // Duration (float32 or float64)
           if (valLen === 4) {
-            containerDurationSec = (view.getFloat32(infoOff, false) * timestampScale) / 1e9;
+            declaredDurationSec = (view.getFloat32(infoOff, false) * timestampScale) / 1e9;
           } else if (valLen === 8) {
-            containerDurationSec = (view.getFloat64(infoOff, false) * timestampScale) / 1e9;
+            declaredDurationSec = (view.getFloat64(infoOff, false) * timestampScale) / 1e9;
           }
         }
 
         infoOff += valLen;
-      }
-
-      if (containerDurationSec > 0) {
-        return checkDuration(containerDurationSec, "webm", byteSize);
       }
     }
 
@@ -441,6 +751,8 @@ function parseWebM(buffer: Uint8Array, view: DataView, byteSize: number): AudioV
     if (el.id === 0x1f43b675) {
       const clusterEnd = Math.min(offset + contentLen, byteSize);
       let clOff = offset;
+      let clusterTimestamp = 0;
+
       while (clOff + 2 <= clusterEnd) {
         const clEl = readEbmlId(buffer, clOff);
         if (clEl.id === 0) break;
@@ -456,153 +768,118 @@ function parseWebM(buffer: Uint8Array, view: DataView, byteSize: number): AudioV
           for (let k = 0; k < clLen; k++) {
             ts = ts * 256 + buffer[clOff + k];
           }
-          if (ts > maxClusterTimestamp) maxClusterTimestamp = ts;
+          clusterTimestamp = ts;
+          if (ts > maxObservedTimestamp) maxObservedTimestamp = ts;
+        } else if (clEl.id === 0xa3 || clEl.id === 0xa0) {
+          // SimpleBlock or BlockGroup
+          if (clLen >= 4) {
+            const trackVint = readEbmlVint(buffer, clOff);
+            const timecodeOff = clOff + trackVint.len;
+            if (timecodeOff + 2 <= clOff + clLen) {
+              const relTimecode = view.getInt16(timecodeOff, false);
+              const blockTs = clusterTimestamp + relTimecode;
+              if (blockTs > maxObservedTimestamp) maxObservedTimestamp = blockTs;
+            }
+          }
         }
 
         clOff += clLen;
+      }
+
+      // Check running cluster timestamp limit
+      const runningDuration = (maxObservedTimestamp * timestampScale) / 1e9;
+      if (runningDuration > MAX_AUDIO_DURATION_SECONDS) {
+        return {
+          valid: false,
+          code: "AUDIO_TOO_LONG",
+          error: `WebM audio duration (${runningDuration.toFixed(1)}s) exceeds the maximum limit of 60 seconds.`,
+          byteSize,
+        };
       }
     }
 
     offset += contentLen;
   }
 
-  if (maxClusterTimestamp > 0) {
-    const clusterDur = (maxClusterTimestamp * timestampScale) / 1e9;
-    return checkDuration(clusterDur, "webm", byteSize);
-  }
+  const clusterDurationSec = maxObservedTimestamp >= 0 ? (maxObservedTimestamp * timestampScale) / 1e9 : -1;
 
-  return {
-    valid: false,
-    code: "AUDIO_DURATION_UNVERIFIABLE",
-    error: "WebM container does not contain verifiable duration or timestamp clusters.",
-    byteSize,
-  };
-}
-
-function parseMp3(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
-  let offset = 0;
-
-  // Skip ID3v2 tag if present
-  if (byteSize >= 10 && readAscii(buffer, 0, 3) === "ID3") {
-    const tagSize =
-      ((buffer[6] & 0x7f) << 21) |
-      ((buffer[7] & 0x7f) << 14) |
-      ((buffer[8] & 0x7f) << 7) |
-      (buffer[9] & 0x7f);
-    offset = 10 + tagSize;
-  }
-
-  // Find first MPEG audio frame
-  while (offset + 4 <= byteSize && !isMpegFrameSync(buffer, offset)) {
-    offset++;
-  }
-
-  if (offset + 4 > byteSize) {
-    return {
-      valid: false,
-      code: "MALFORMED_AUDIO_HEADER",
-      error: "No valid MPEG audio frame sync found in MP3 file.",
-      byteSize,
-    };
-  }
-
-  const h0 = buffer[offset];
-  const h1 = buffer[offset + 1];
-  const h2 = buffer[offset + 2];
-  const h3 = buffer[offset + 3];
-
-  const versionBits = (h1 >> 3) & 0x03; // 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5
-  const layerBits = (h1 >> 1) & 0x03; // 1 = Layer III
-  const sampleRateIdx = (h2 >> 2) & 0x03;
-  const channelMode = (h3 >> 6) & 0x03;
-
-  if (layerBits !== 1 || sampleRateIdx === 3) {
-    return {
-      valid: false,
-      code: "MALFORMED_AUDIO_HEADER",
-      error: "Unsupported MPEG audio layer or sample rate.",
-      byteSize,
-    };
-  }
-
-  const sampleRateMap = [44100, 48000, 32000];
-  const sampleRate = sampleRateMap[sampleRateIdx] || 44100;
-  const isMono = channelMode === 3;
-  const samplesPerFrame = versionBits === 3 ? 1152 : 576;
-
-  // Check for Xing / Info header in first frame
-  const xingOffset = offset + (versionBits === 3 ? (isMono ? 21 : 36) : isMono ? 13 : 21);
-  if (xingOffset + 12 <= byteSize) {
-    const tag = readAscii(buffer, xingOffset, 4);
-    if (tag === "Xing" || tag === "Info") {
-      const flags = view.getUint32(xingOffset + 4, false);
-      if ((flags & 0x01) !== 0) {
-        const totalFrames = view.getUint32(xingOffset + 8, false);
-        if (totalFrames > 0) {
-          const duration = (totalFrames * samplesPerFrame) / sampleRate;
-          return checkDuration(duration, "mp3", byteSize);
-        }
-      }
-    }
-  }
-
-  // Scan MPEG frames across the file
-  let frameCount = 0;
-  let scanOffset = offset;
-
-  while (scanOffset + 4 <= byteSize) {
-    if (!isMpegFrameSync(buffer, scanOffset)) {
-      scanOffset++;
-      continue;
-    }
-
-    const b1 = buffer[scanOffset + 1];
-    const b2 = buffer[scanOffset + 2];
-    const brIdx = (b2 >> 4) & 0x0f;
-    const srIdx = (b2 >> 2) & 0x03;
-    const pad = (b2 >> 1) & 0x01;
-
-    if (brIdx === 0 || brIdx === 15 || srIdx === 3) {
-      scanOffset++;
-      continue;
-    }
-
-    // Bitrate table for MPEG-1 Layer III (kbps)
-    const bitrateTable = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0];
-    const bitrate = bitrateTable[brIdx] * 1000;
-    const curSampleRate = sampleRateMap[srIdx] || sampleRate;
-
-    const frameLen = Math.floor((144 * bitrate) / curSampleRate) + pad;
-    if (frameLen <= 4) {
-      scanOffset++;
-      continue;
-    }
-
-    frameCount++;
-    const currentDur = (frameCount * samplesPerFrame) / curSampleRate;
-    if (currentDur > MAX_AUDIO_DURATION_SECONDS) {
+  // Reconcile declared duration with observed cluster duration
+  if (declaredDurationSec > 0 && clusterDurationSec > 0) {
+    if (clusterDurationSec > declaredDurationSec + 2.0) {
       return {
         valid: false,
-        code: "AUDIO_TOO_LONG",
-        error: `Audio duration (${currentDur.toFixed(1)}s) exceeds the maximum limit of 60 seconds.`,
+        code: "MALFORMED_AUDIO_HEADER",
+        error: `WebM Cluster timing (${clusterDurationSec.toFixed(1)}s) contradicts declared Info duration (${declaredDurationSec.toFixed(1)}s); hidden audio detected.`,
         byteSize,
       };
     }
-
-    scanOffset += frameLen;
   }
 
-  if (frameCount < 2) {
+  const effectiveDuration = Math.max(declaredDurationSec, clusterDurationSec);
+  if (effectiveDuration <= 0) {
     return {
       valid: false,
       code: "AUDIO_DURATION_UNVERIFIABLE",
-      error: "Unable to verify frame sequence in MP3 file.",
+      error: "WebM container does not contain verifiable duration or timestamp clusters.",
       byteSize,
     };
   }
 
-  const finalDuration = (frameCount * samplesPerFrame) / sampleRate;
-  return checkDuration(finalDuration, "mp3", byteSize);
+  return checkDuration(effectiveDuration, "webm", byteSize);
+}
+
+function parseFlac(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
+  const blockType = buffer[4] & 0x7f;
+  const blockLength = (buffer[5] << 16) | (buffer[6] << 8) | buffer[7];
+
+  if (blockType !== 0 || blockLength < 34 || 8 + blockLength > byteSize) {
+    return {
+      valid: false,
+      code: "MALFORMED_AUDIO_HEADER",
+      error: "FLAC STREAMINFO block is corrupt or missing.",
+      byteSize,
+    };
+  }
+
+  const b0 = buffer[18];
+  const b1 = buffer[19];
+  const b2 = buffer[20];
+  const sampleRate = (b0 << 12) | (b1 << 4) | (b2 >> 4);
+
+  const b3 = buffer[21];
+  const b4 = buffer[22];
+  const b5 = buffer[23];
+  const b6 = buffer[24];
+  const b7 = buffer[25];
+
+  const top4Bits = b2 & 0x0f;
+  const totalSamples =
+    top4Bits * 2 ** 32 +
+    (b3 * 2 ** 24 + b4 * 2 ** 16 + b5 * 2 ** 8 + b6) +
+    b7 / 256;
+
+  if (sampleRate <= 0 || totalSamples <= 0) {
+    return {
+      valid: false,
+      code: "AUDIO_DURATION_UNVERIFIABLE",
+      error: "FLAC header does not specify valid sample rate or sample count.",
+      byteSize,
+    };
+  }
+
+  const duration = totalSamples / sampleRate;
+
+  // Cross-check: If claimed duration is short (e.g. <= 10s) but file size is > 2.5 MB
+  if (duration <= 10.0 && byteSize > 2.5 * 1024 * 1024) {
+    return {
+      valid: false,
+      code: "MALFORMED_AUDIO_HEADER",
+      error: "FLAC file size contradicts STREAMINFO total samples metadata; possible hidden audio.",
+      byteSize,
+    };
+  }
+
+  return checkDuration(duration, "flac", byteSize);
 }
 
 // -----------------------------------------------------------------------------

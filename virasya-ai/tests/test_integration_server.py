@@ -186,3 +186,46 @@ def test_transcription_endpoint_with_mock_gnani(live_server, synthetic_wav):
         assert res["vaani"] == "ନମସ୍କାର ଭାରତ"
         assert res["results"]["vaani"]["status"] == "done"
         assert res["results"]["vaani"]["text"] == "ନମସ୍କାର ଭାରତ"
+
+
+def test_transcription_endpoint_missing_api_key_returns_503(live_server, synthetic_wav, monkeypatch):
+    """Verify that a missing GNANI_API_KEY returns a clear 503 SERVICE_UNAVAILABLE without leaking secrets."""
+    from virasya_ai.web.server import INPUT_AUDIO_DIR
+    dest = INPUT_AUDIO_DIR / synthetic_wav.name
+    dest.write_bytes(synthetic_wav.read_bytes())
+
+    monkeypatch.delenv("GNANI_API_KEY", raising=False)
+    status, res = http_post_json(
+        f"{live_server}/api/transcribe",
+        {"filename": synthetic_wav.name, "language_code": "hi-IN"}
+    )
+    assert status == HTTPStatus.SERVICE_UNAVAILABLE
+    assert res["code"] == "missing_api_key"
+    assert "GNANI_API_KEY is not set" in res["error"]
+
+
+def test_transcription_endpoint_rejects_unsupported_language(live_server, synthetic_wav, monkeypatch):
+    """Verify that an unsupported or unconfigured language code returns 422 UNPROCESSABLE_ENTITY."""
+    from virasya_ai.web.server import INPUT_AUDIO_DIR
+    dest = INPUT_AUDIO_DIR / synthetic_wav.name
+    dest.write_bytes(synthetic_wav.read_bytes())
+
+    monkeypatch.setenv("GNANI_API_KEY", "mock-placeholder-key")
+    status, res = http_post_json(
+        f"{live_server}/api/transcribe",
+        {"filename": synthetic_wav.name, "language_code": "unsupported-lang"}
+    )
+    assert status == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert res["code"] == "unsupported_language"
+
+
+def test_transcription_endpoint_rejects_missing_audio_file(live_server, monkeypatch):
+    """Verify that requesting transcription for a non-existent file returns 400."""
+    monkeypatch.setenv("GNANI_API_KEY", "mock-placeholder-key")
+    status, res = http_post_json(
+        f"{live_server}/api/transcribe",
+        {"filename": "non_existent_audio.wav", "language_code": "hi-IN"}
+    )
+    assert status == HTTPStatus.BAD_REQUEST
+    assert "not found" in res["error"]
+

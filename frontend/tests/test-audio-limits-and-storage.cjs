@@ -371,8 +371,160 @@ console.log("=== Virasya Audio Storage, Limits & Playback Test Suite ===\n");
     }
   }
 
-  // --- Behavioral Test 6: Reliable Exact Object Lookup & Prefix Confusion Prevention (SEC-03) ---
-  console.log("\nBehavioral Test 6: Storage exact key lookup simulation vs prefix confusion (SEC-03)...");
+  // --- Behavioral Test 6: WebM Adversarial Bypass Prevention Regression ---
+  console.log("\nBehavioral Test 6: WebM adversarial bypass regression (VULN-01)...");
+  const ebmlHdr = [0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+  const segHdr = [0x18, 0x53, 0x80, 0x67, 0x10, 0x00, 0x00, 0x50];
+  const infoHdr = [0x15, 0x49, 0xa9, 0x66, 0x87];
+  const dur10El = [0x44, 0x89, 0x84, 0x46, 0x1c, 0x40, 0x00]; // Info.Duration = 10.0s
+
+  // Case 6A: Declared 10.0s in Info, but Cluster at 90.0s (exceeding 60s limit)
+  const cluster90 = [0x1f, 0x43, 0xb6, 0x75, 0x86, 0xe7, 0x84, 0x00, 0x01, 0x5f, 0x90];
+  const webm90Adv = new Uint8Array([...ebmlHdr, ...segHdr, ...infoHdr, ...dur10El, ...cluster90]);
+  const resWebm90 = validateAudioBuffer(webm90Adv, ".webm");
+  assert.strictEqual(resWebm90.valid, false);
+  assert.strictEqual(resWebm90.code, "AUDIO_TOO_LONG", "WebM with Cluster at 90s must be rejected as AUDIO_TOO_LONG");
+
+  // Case 6B: Declared 10.0s in Info, but Cluster at 45.0s (contradicting Info metadata)
+  const cluster45 = [0x1f, 0x43, 0xb6, 0x75, 0x86, 0xe7, 0x84, 0x00, 0x00, 0xaf, 0xc8];
+  const webm45Adv = new Uint8Array([...ebmlHdr, ...segHdr, ...infoHdr, ...dur10El, ...cluster45]);
+  const resWebm45 = validateAudioBuffer(webm45Adv, ".webm");
+  assert.strictEqual(resWebm45.valid, false);
+  assert.strictEqual(resWebm45.code, "MALFORMED_AUDIO_HEADER", "WebM with contradicting cluster timing must be rejected");
+  console.log("   ✓ WebM adversarial timing bypasses (Cluster at 90s and contradictory 45s vs 10s) prevented.");
+
+  // --- Behavioral Test 7: OGG Adversarial Granule Spoofing Regression ---
+  console.log("\nBehavioral Test 7: OGG adversarial granule spoofing regression (VULN-02)...");
+  const odiaTestPath = path.join(audioDir, "e2e_verify_odia6.ogg");
+  if (fs.existsSync(odiaTestPath)) {
+    const origOdiaBuf = fs.readFileSync(odiaTestPath);
+    // Append dummy trailing page claiming granule = 48,000 (1.0s)
+    const fakeOggPage = new Uint8Array(30);
+    fakeOggPage.set([0x4f, 0x67, 0x67, 0x53], 0);
+    fakeOggPage[4] = 0;
+    fakeOggPage[5] = 4;
+    new DataView(fakeOggPage.buffer).setUint32(6, 48000, true);
+    new DataView(fakeOggPage.buffer).setUint32(10, 0, true);
+    fakeOggPage[26] = 1;
+    fakeOggPage[27] = 2;
+    const spoofedOggBuf = new Uint8Array(origOdiaBuf.length + fakeOggPage.length);
+    spoofedOggBuf.set(origOdiaBuf, 0);
+    spoofedOggBuf.set(fakeOggPage, origOdiaBuf.length);
+
+    const resOggSpoof = validateAudioBuffer(spoofedOggBuf, ".ogg");
+    assert.strictEqual(resOggSpoof.valid, false);
+    assert.strictEqual(resOggSpoof.code, "MALFORMED_AUDIO_HEADER", "OGG with spoofed trailing page must fail monotonic/header check");
+    console.log("   ✓ OGG spoofed trailing page rejected (non-monotonic sequence/granule detected).");
+  }
+
+  // --- Behavioral Test 8: MP3 Xing Forgery & MPEG-2/2.5 Support Regression ---
+  console.log("\nBehavioral Test 8: MP3 Xing forgery & MPEG-2/2.5 support regression (VULN-03 & VULN-06)...");
+  // Case 8A: Forged Xing header claiming 10 frames on 50-frame buffer
+  const frameSz = 417;
+  const mp3ForgedBuf = new Uint8Array(frameSz * 50);
+  for (let i = 0; i < 50; i++) {
+    const off = i * frameSz;
+    mp3ForgedBuf[off] = 0xff;
+    mp3ForgedBuf[off + 1] = 0xfb;
+    mp3ForgedBuf[off + 2] = 0x90;
+    mp3ForgedBuf[off + 3] = 0x00;
+  }
+  mp3ForgedBuf.set([0x58, 0x69, 0x6e, 0x67], 36);
+  mp3ForgedBuf.set([0x00, 0x00, 0x00, 0x01], 40);
+  mp3ForgedBuf.set([0x00, 0x00, 0x00, 0x0a], 44); // claims 10 frames
+  const resMp3Forged = validateAudioBuffer(mp3ForgedBuf, ".mp3");
+  assert.strictEqual(resMp3Forged.valid, false);
+  assert.strictEqual(resMp3Forged.code, "MALFORMED_AUDIO_HEADER", "MP3 with frames exceeding Xing claim must be rejected");
+
+  // Case 8B: Valid MPEG-2 Layer III frames (22050 Hz, 64 kbps, mono -> frame size = 72 * 64000 / 22050 = 208 bytes)
+  const mpeg2FrameSz = 208;
+  const mpeg2Buf = new Uint8Array(mpeg2FrameSz * 20); // 20 frames = 20 * 576 / 22050 = 0.52s
+  for (let i = 0; i < 20; i++) {
+    const off = i * mpeg2FrameSz;
+    mpeg2Buf[off] = 0xff;
+    mpeg2Buf[off + 1] = 0xf3; // 1111 0011 (MPEG-2 Layer III)
+    mpeg2Buf[off + 2] = 0x80; // 1000 0000 (64 kbps, 22050 Hz, no pad)
+    mpeg2Buf[off + 3] = 0xc0; // mono
+  }
+  const resMpeg2 = validateAudioBuffer(mpeg2Buf, ".mp3");
+  assert.strictEqual(resMpeg2.valid, true);
+  assert.strictEqual(resMpeg2.format, "mp3");
+  assert(resMpeg2.durationSeconds > 0.4 && resMpeg2.durationSeconds < 0.6);
+  console.log("   ✓ MP3 Xing header forgery rejected; MPEG-2 Layer III frame sequence accurately parsed.");
+
+  // --- Behavioral Test 9: M4A Discrepant Payload Regression ---
+  console.log("\nBehavioral Test 9: M4A discrepant payload regression (VULN-04)...");
+  const ftypBox = [0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x34, 0x41, 0x20];
+  const mvhdBox = new Uint8Array(108);
+  const mvhdVw = new DataView(mvhdBox.buffer);
+  mvhdVw.setUint32(0, 108, false);
+  mvhdBox.set([0x6d, 0x76, 0x68, 0x64], 4);
+  mvhdBox[8] = 0;
+  mvhdVw.setUint32(20, 1000, false);
+  mvhdVw.setUint32(24, 5000, false); // claims 5.0s
+
+  const moovBox = new Uint8Array(116);
+  new DataView(moovBox.buffer).setUint32(0, 116, false);
+  moovBox.set([0x6d, 0x6f, 0x6f, 0x76], 4);
+  moovBox.set(mvhdBox, 8);
+
+  const mdatBoxLen = 3 * 1024 * 1024; // 3 MB mdat
+  const mdatBox = new Uint8Array(mdatBoxLen);
+  new DataView(mdatBox.buffer).setUint32(0, mdatBoxLen, false);
+  mdatBox.set([0x6d, 0x64, 0x61, 0x74], 4);
+
+  const m4aAdvBuf = new Uint8Array(ftypBox.length + moovBox.length + mdatBox.length);
+  m4aAdvBuf.set(ftypBox, 0);
+  m4aAdvBuf.set(moovBox, ftypBox.length);
+  m4aAdvBuf.set(mdatBox, ftypBox.length + moovBox.length);
+
+  const resM4aAdv = validateAudioBuffer(m4aAdvBuf, ".m4a");
+  assert.strictEqual(resM4aAdv.valid, false);
+  assert.strictEqual(resM4aAdv.code, "MALFORMED_AUDIO_HEADER", "M4A with 3 MB mdat claiming 5s must be rejected");
+  console.log("   ✓ M4A discrepant media payload (3 MB mdat vs 5s claimed) rejected.");
+
+  // --- Behavioral Test 10: WAV Trailing Payload Regression ---
+  console.log("\nBehavioral Test 10: WAV trailing unallocated payload regression (VULN-05)...");
+  const wavTotBytes = 3 * 1024 * 1024; // 3 MB
+  const wavAdvBuf = new Uint8Array(wavTotBytes);
+  const wavVw = new DataView(wavAdvBuf.buffer);
+  wavAdvBuf.set([0x52, 0x49, 0x46, 0x46], 0);
+  wavVw.setUint32(4, wavTotBytes - 8, true);
+  wavAdvBuf.set([0x57, 0x41, 0x56, 0x45], 8);
+  wavAdvBuf.set([0x66, 0x6d, 0x74, 0x20], 12);
+  wavVw.setUint32(16, 16, true);
+  wavVw.setUint16(20, 1, true); // PCM
+  wavVw.setUint16(22, 1, true); // 1 ch
+  wavVw.setUint32(24, 16000, true);
+  wavVw.setUint32(28, 32000, true);
+  wavVw.setUint16(32, 2, true);
+  wavVw.setUint16(34, 16, true);
+  wavAdvBuf.set([0x64, 0x61, 0x74, 0x61], 36);
+  wavVw.setUint32(40, 32000, true); // claims only 1 second
+
+  const resWavAdv = validateAudioBuffer(wavAdvBuf, ".wav");
+  assert.strictEqual(resWavAdv.valid, false);
+  assert.strictEqual(resWavAdv.code, "AUDIO_TOO_LONG", "WAV with 3 MB payload claiming 1s dataSize must be rejected as AUDIO_TOO_LONG");
+  console.log("   ✓ WAV trailing unallocated payload (3 MB file claiming 1s data) rejected.");
+
+  // --- Behavioral Test 11: FLAC Sample Count Discrepancy Regression ---
+  console.log("\nBehavioral Test 11: FLAC sample count discrepancy regression...");
+  const flacAdvBuf = new Uint8Array(3 * 1024 * 1024);
+  flacAdvBuf.set([0x66, 0x4c, 0x61, 0x43], 0);
+  flacAdvBuf.set([0x00, 0x00, 0x00, 0x22], 4);
+  flacAdvBuf[18] = 0x03;
+  flacAdvBuf[19] = 0xe8;
+  flacAdvBuf[20] = 0x00;
+  flacAdvBuf[24] = 0x3e;
+  flacAdvBuf[25] = 0x80; // claims 16,000 samples (1s)
+
+  const resFlacAdv = validateAudioBuffer(flacAdvBuf, ".flac");
+  assert.strictEqual(resFlacAdv.valid, false);
+  assert.strictEqual(resFlacAdv.code, "MALFORMED_AUDIO_HEADER", "FLAC with 3 MB file claiming 1s must be rejected");
+  console.log("   ✓ FLAC sample count discrepancy (3 MB file claiming 1s) rejected.");
+
+  // --- Behavioral Test 12: Reliable Exact Object Lookup & Prefix Confusion Prevention (SEC-03) ---
+  console.log("\nBehavioral Test 12: Storage exact key lookup simulation vs prefix confusion (SEC-03)...");
   // Simulate mock Supabase Storage backing map
   const mockStorage = new Map();
   mockStorage.set("user-123/story_recording.wav", generatePcmWav(15.0));
@@ -401,8 +553,8 @@ console.log("=== Virasya Audio Storage, Limits & Playback Test Suite ===\n");
   assert.strictEqual(missingReq.data, null, "Missing object must fail closed");
   console.log("   ✓ Storage download requires exact key match; prefix collisions (.bak, -extended) cannot be mistaken for requested object.");
 
-  // --- Behavioral Test 7: Active Storyteller Folder Scale (> 10 items) ---
-  console.log("\nBehavioral Test 7: Active storyteller folder scale (>10 items pagination fix)...");
+  // --- Behavioral Test 13: Active Storyteller Folder Scale (> 10 items) ---
+  console.log("\nBehavioral Test 13: Active storyteller folder scale (>10 items pagination fix)...");
   // Simulate a prolific user with 25 audio files
   for (let i = 1; i <= 25; i++) {
     mockStorage.set(`user-prolific/recording_${String(i).padStart(2, "0")}.wav`, generatePcmWav(5.0));
@@ -415,8 +567,8 @@ console.log("=== Virasya Audio Storage, Limits & Playback Test Suite ===\n");
   assert.strictEqual(item23.error, null);
   console.log("   ✓ User directory with >10 items (25 files) succeeds without false-negative AUDIO_OBJECT_NOT_FOUND.");
 
-  // --- Behavioral Test 8: Authorization & Ownership Partition Simulation ---
-  console.log("\nBehavioral Test 8: Authorization & ownership partition simulation...");
+  // --- Behavioral Test 14: Authorization & Ownership Partition Simulation ---
+  console.log("\nBehavioral Test 14: Authorization & ownership partition simulation...");
   function verifyPathAuthorization(authUserId, storagePath) {
     if (storagePath.includes("..") || storagePath.includes("\\") || storagePath.startsWith("/")) {
       return { authorized: false, code: "MALFORMED_STORAGE_PATH" };
@@ -435,8 +587,8 @@ console.log("=== Virasya Audio Storage, Limits & Playback Test Suite ===\n");
   assert.strictEqual(verifyPathAuthorization("user-alice", "/user-alice/rec.wav").code, "MALFORMED_STORAGE_PATH");
   console.log("   ✓ Cross-user folder access and directory traversal attempts strictly rejected.");
 
-  // --- Behavioral Test 9: Playback Authorization Logic Simulation ---
-  console.log("\nBehavioral Test 9: Playback authorization simulation...");
+  // --- Behavioral Test 15: Playback Authorization Logic Simulation ---
+  console.log("\nBehavioral Test 15: Playback authorization simulation...");
   function evaluatePlaybackAccess(story, callerUserId) {
     const isPublicPreserved = story.status === "preserved" && story.visibility === "public";
     if (isPublicPreserved) {
@@ -467,8 +619,8 @@ console.log("=== Virasya Audio Storage, Limits & Playback Test Suite ===\n");
   assert.strictEqual(evaluatePlaybackAccess(draftStory, "user-2").code, "FORBIDDEN_AUDIO_ACCESS");
   console.log("   ✓ Playback access correctly gates public vs private vs draft recordings.");
 
-  // --- Behavioral Test 10: Failed Upload / Unvalidated Recording Story Sealing Prevention ---
-  console.log("\nBehavioral Test 10: Story sealing fail-closed on audio validation failure...");
+  // --- Behavioral Test 16: Failed Upload / Unvalidated Recording Story Sealing Prevention ---
+  console.log("\nBehavioral Test 16: Story sealing fail-closed on audio validation failure...");
   function simulateStorySealing(audioPayload, storageMap) {
     if (!audioPayload) {
       // Text-only story
