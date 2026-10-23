@@ -229,11 +229,36 @@ export const STORY_CATEGORIES = [
   "Other",
 ];
 
+export interface LanguageOptionItem {
+  name: string;
+  code: string;
+  providerConfigured: boolean;
+}
+
+export const LANGUAGE_OPTIONS: LanguageOptionItem[] = [
+  { name: "Hindi", code: "hi-IN", providerConfigured: true },
+  { name: "Bengali", code: "bn-IN", providerConfigured: true },
+  { name: "Gujarati", code: "gu-IN", providerConfigured: true },
+  { name: "Kannada", code: "kn-IN", providerConfigured: true },
+  { name: "Malayalam", code: "ml-IN", providerConfigured: true },
+  { name: "Marathi", code: "mr-IN", providerConfigured: true },
+  { name: "Punjabi", code: "pa-IN", providerConfigured: true },
+  { name: "Tamil", code: "ta-IN", providerConfigured: true },
+  { name: "English (India)", code: "en-IN", providerConfigured: true },
+  { name: "Telugu", code: "te-IN", providerConfigured: true },
+];
+
 export const STORY_LANGUAGES = [
-  "Odia",
   "Hindi",
-  "English",
   "Bengali",
+  "Gujarati",
+  "Kannada",
+  "Malayalam",
+  "Marathi",
+  "Punjabi",
+  "Tamil",
+  "English (India)",
+  "Telugu",
   "Other",
 ];
 

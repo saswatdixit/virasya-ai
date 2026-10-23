@@ -14,10 +14,15 @@ import ExplorePage from "../explore/ExplorePage";
 import { AuthProvider, AuthModal, useAuth } from "../auth";
 import ErrorBoundary from "../components/shared/ErrorBoundary";
 
-const PLACEHOLDER_CONFIGS: Record<
-  string,
-  { eyebrow: string; title: string; desc: string; icon: string }
-> = {
+interface PlaceholderConfig {
+  eyebrow?: string;
+  badge?: string;
+  title: string;
+  desc: string;
+  icon?: string;
+}
+
+const PLACEHOLDER_CONFIGS: Record<string, PlaceholderConfig> = {
   "/search": {
     eyebrow: "Sovereign Search",
     title: "Search the Living Archive",
@@ -31,19 +36,19 @@ const PLACEHOLDER_CONFIGS: Record<
     icon: "🏛",
   },
   "/private-vault": {
-    eyebrow: "Encrypted Provenance",
+    badge: "Coming Soon",
+    eyebrow: "Sovereign Archival Heritage",
     title: "Private Sovereign Vault",
-    desc: "Your family's private audio recordings, restricted memories, and lineage archives.",
-    icon: "🔒",
+    desc: "Coming soon — we’re working on a secure private space for your family recordings, restricted memories, and lineage archives.",
   },
 };
 
 function PlaceholderPage({ path }: { path: string }) {
   const config = PLACEHOLDER_CONFIGS[path] || {
+    badge: "Coming Soon",
     eyebrow: "Archive Preservation",
     title: "Living Archive Section",
     desc: "This heritage preservation area is currently being prepared for sovereign archival storage.",
-    icon: "📜",
   };
 
   return (
@@ -54,57 +59,24 @@ function PlaceholderPage({ path }: { path: string }) {
       <Header placeholder />
       <main id="main" className="placeholder-view-section">
         <div className="placeholder-card">
-          <div className="placeholder-icon">{config.icon}</div>
-          <div className="placeholder-eyebrow">{config.eyebrow}</div>
+          {config.badge && (
+            <div className="placeholder-badge">
+              <span className="placeholder-badge-dot" aria-hidden="true" />
+              <span>{config.badge}</span>
+            </div>
+          )}
+          {config.icon && <div className="placeholder-icon">{config.icon}</div>}
+          {config.eyebrow && <div className="placeholder-eyebrow">{config.eyebrow}</div>}
           <h1 className="placeholder-title">{config.title}</h1>
           <p className="placeholder-desc">{config.desc}</p>
           <div className="placeholder-buttons">
-            <a
-              href="/"
-              className="p-btn p-btn-ghost p-btn-sm"
-              style={{
-                textDecoration: "none",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "10px 18px",
-                borderRadius: 8,
-                border: "1px solid rgba(201,166,107,.4)",
-                color: "#C9A66B",
-              }}
-            >
+            <a href="/" className="placeholder-btn-home">
               ← Back to Home
             </a>
-            <a
-              href="/explore"
-              className="p-btn p-btn-ghost p-btn-sm"
-              style={{
-                textDecoration: "none",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "10px 18px",
-                borderRadius: 8,
-                border: "1px solid rgba(240,228,208,.2)",
-                color: "#F0E4D0",
-              }}
-            >
+            <a href="/explore" className="placeholder-btn-explore">
               Explore Stories
             </a>
-            <a
-              href="/preserve-your-story"
-              className="p-btn p-btn-brass p-btn-sm"
-              style={{
-                textDecoration: "none",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "10px 18px",
-                borderRadius: 8,
-                background: "#B85D32",
-                color: "#FFF",
-              }}
-            >
+            <a href="/preserve-your-story" className="placeholder-btn-preserve">
               Preserve a Story →
             </a>
           </div>

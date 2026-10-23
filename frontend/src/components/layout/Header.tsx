@@ -32,9 +32,11 @@ export default function Header({
 }: {
   placeholder?: boolean;
 }) {
-  const { user, openAuthModal } = useAuth();
+  const { user, profile, openAuthModal } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+
+  const displayName = profile?.display_name || (user?.email ? user.email.split("@")[0] : "");
 
   useEffect(() => {
     const handleScroll = () => {
@@ -109,8 +111,8 @@ export default function Header({
             type="button"
             className="nav-icon-btn nav-profile"
             onClick={openAuthModal}
-            aria-label={user?.email ? `Archivist profile (${user.email})` : "Sign in or view profile"}
-            title={user?.email ? `Signed in as ${user.email}` : "Sign in or view profile"}
+            aria-label={user ? `Archivist profile (${displayName || user.email})` : "Sign in or view profile"}
+            title={user ? `Signed in as ${displayName || user.email}` : "Sign in or view profile"}
           >
             <ProfileIcon />
             {user && <span className="nav-profile-active-dot" aria-hidden="true" />}
@@ -154,9 +156,9 @@ export default function Header({
             setMobileOpen(false);
             openAuthModal();
           }}
-          aria-label={user?.email ? `Archivist profile (${user.email})` : "Sign In"}
+          aria-label={user ? `Archivist profile (${displayName || user.email})` : "Sign In"}
         >
-          <ProfileIcon /> {user?.email ? user.email.split("@")[0] : "Profile"}
+          <ProfileIcon /> {displayName || "Profile"}
           {user && <span className="mobile-profile-active-dot" aria-hidden="true"> •</span>}
         </button>
         <a

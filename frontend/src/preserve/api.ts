@@ -6,6 +6,7 @@
 import { SAMPLE_EXPLORE_STORIES } from "../explore/sampleStories";
 import {
   getSupabase,
+  isSupabaseConfigured,
   fetchExploreStoriesFromSupabase,
   fetchExploreStoryDetailFromSupabase,
 } from "../supabase";
@@ -643,80 +644,49 @@ export async function fetchExploreFeed(filters?: {
   language?: string;
   place?: string;
 }): Promise<ExploreFeedResponse> {
-  // 1. Try querying public preserved stories from Supabase first
+  // The public explore feed queries ONLY preserved public stories from Supabase.
+  // It never falls back to local backend JSON drafts or test fixture files.
+  if (!isSupabaseConfigured()) {
+    return {
+      status: "success",
+      count: 0,
+      stories: [],
+    };
+  }
+
   try {
     const supabaseResult = await fetchExploreStoriesFromSupabase(filters);
-    if (supabaseResult && supabaseResult.stories && supabaseResult.stories.length > 0) {
-      return {
-        status: "success",
-        count: supabaseResult.count,
-        stories: supabaseResult.stories,
-      };
-    }
+    return {
+      status: "success",
+      count: supabaseResult.count,
+      stories: supabaseResult.stories,
+    };
   } catch (supabaseErr: any) {
-    console.warn("[Explore] Supabase query failed, falling back to local backend:", supabaseErr?.message);
-  }
-
-  // 2. Fall back to local backend explore feed if Supabase returned 0 stories or is unconfigured
-  if (!isBackendConfigured()) {
-    return {
-      status: "success",
-      count: 0,
-      stories: [],
-    };
-  }
-
-  const base = getApiBase();
-  const params = new URLSearchParams();
-  const searchTerm = filters?.search || filters?.q;
-  if (searchTerm) params.set("search", searchTerm);
-  if (filters?.category && filters.category !== "All") params.set("category", filters.category);
-  if (filters?.language && filters.language !== "All") params.set("language", filters.language);
-  if (filters?.place) params.set("place", filters.place);
-
-  const query = params.toString() ? `?${params.toString()}` : "";
-  try {
-    const res = await fetch(`${base}/api/explore${query}`);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch explore feed: ${res.statusText}`);
-    }
-    return res.json();
-  } catch (err: any) {
-    console.warn("Backend explore feed unreachable:", err.message);
-    return {
-      status: "success",
-      count: 0,
-      stories: [],
-    };
+    console.error("[Explore] Supabase query failed:", supabaseErr?.message);
+    throw new Error(
+      `Failed to load stories from archive: ${supabaseErr?.message || "Remote database error"}`
+    );
   }
 }
 
 export async function fetchExploreStoryDetail(storyId: string): Promise<{ status: "success"; story: ExploreDetailStory }> {
-  // Check authorized sample preview stories first
+  // Check authorized sample preview stories first (for offline preview demo)
   const sample = SAMPLE_EXPLORE_STORIES.find((s) => s.id === storyId);
   if (sample) {
     return { status: "success", story: sample };
   }
 
-  // Check Supabase public stories first
-  try {
-    const supabaseDetail = await fetchExploreStoryDetailFromSupabase(storyId);
-    if (supabaseDetail) {
-      return { status: "success", story: supabaseDetail };
+  // Check Supabase public stories
+  if (isSupabaseConfigured()) {
+    try {
+      const supabaseDetail = await fetchExploreStoryDetailFromSupabase(storyId);
+      if (supabaseDetail) {
+        return { status: "success", story: supabaseDetail };
+      }
+    } catch (err: any) {
+      console.warn("[Explore] Supabase story detail error:", err?.message);
     }
-  } catch (err) {
-    // Continue to local backend
   }
 
-  if (!isBackendConfigured()) {
-    throw new Error("Story record is not available in offline preview mode.");
-  }
-
-  const base = getApiBase();
-  const res = await fetch(`${base}/api/explore/${encodeURIComponent(storyId)}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Story not available: ${res.statusText}`);
-  }
-  return res.json();
+  throw new Error("Story record is not available in the public archive.");
 }

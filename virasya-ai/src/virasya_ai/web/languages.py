@@ -36,3 +36,22 @@ def language_options_payload() -> list[dict[str, object]]:
 
 def get_language(code: str) -> LanguageOption | None:
     return LANGUAGE_BY_CODE.get(code)
+
+
+def resolve_language_option(query: str | None) -> LanguageOption | None:
+    """Resolves a language code, prefix, or name to a configured LanguageOption."""
+    if not query or not isinstance(query, str) or not query.strip():
+        return None
+    normalized = query.strip().lower().replace("_", "-")
+    for opt in LANGUAGE_OPTIONS:
+        if opt.code.lower() == normalized:
+            return opt
+    for opt in LANGUAGE_OPTIONS:
+        if opt.name.lower() == normalized:
+            return opt
+    for opt in LANGUAGE_OPTIONS:
+        if opt.code.split("-")[0].lower() == normalized:
+            return opt
+    if normalized in ("english", "en"):
+        return get_language("en-IN")
+    return None

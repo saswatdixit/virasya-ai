@@ -21,7 +21,20 @@ const CATEGORIES = [
   "Customs and rituals",
 ];
 
-const LANGUAGES = ["All", "Odia", "Sambalpuri", "Koshali", "English"];
+const LANGUAGES = [
+  "All",
+  "Hindi",
+  "Bengali",
+  "Gujarati",
+  "Kannada",
+  "Malayalam",
+  "Marathi",
+  "Punjabi",
+  "Tamil",
+  "English (India)",
+  "Telugu",
+  "Other",
+];
 
 export default function ExplorePage() {
   const [stories, setStories] = useState<ExploreStoryCard[]>([]);
@@ -84,8 +97,8 @@ export default function ExplorePage() {
       });
       setStories(data.stories || []);
     } catch (err: any) {
-      console.warn("Could not retrieve stories from backend, using preview mode:", err);
-      // In frontend-only preview without backend, stories array remains empty
+      console.warn("Could not retrieve stories from archive:", err);
+      setError(err?.message || "Failed to load stories from the living archive.");
       setStories([]);
     } finally {
       setLoading(false);
@@ -364,7 +377,7 @@ export default function ExplorePage() {
 
                         <h2 className="exp-card-title">{story.title}</h2>
                         <div className="exp-card-carrier">
-                          {story.carrier && `Carried by ${story.carrier}`}
+                          Carried by {story.carrier || "Community contributor"}
                           {story.place && ` · ${story.place}`}
                           {story.period && ` · ${story.period}`}
                         </div>
@@ -462,7 +475,7 @@ export default function ExplorePage() {
                   </h1>
 
                   <p className="p-lede exp-drawer-carrier">
-                    Told by <strong>{detailStory.carrier}</strong>
+                    Told by <strong>{detailStory.carrier || "Community contributor"}</strong>
                     {detailStory.place && ` · Rooted in ${detailStory.place}`}
                     {detailStory.period && ` · Circa ${detailStory.period}`}
                   </p>

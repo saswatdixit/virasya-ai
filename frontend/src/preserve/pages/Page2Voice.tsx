@@ -5,6 +5,7 @@ import { uploadAudioToPrivateBucket } from "../../supabase";
 import { formatTime } from "../utils";
 import AudioPlayer from "../components/AudioPlayer";
 import { uploadAudioToBackend } from "../api";
+import { LANGUAGE_OPTIONS } from "../types";
 
 export default function Page2Voice() {
   const {
@@ -32,6 +33,9 @@ export default function Page2Voice() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [replacing, setReplacing] = useState(false);
+
+  const currentLangOption = LANGUAGE_OPTIONS.find((l) => l.code === selectedLanguage);
+  const currentLangName = currentLangOption ? currentLangOption.name : "Selected Language";
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -404,7 +408,7 @@ export default function Page2Voice() {
                     </div>
 
                     <p className="p-small" style={{ margin: "0 0 14px", color: "var(--v-ink)", lineHeight: 1.5 }}>
-                      Gnani Prisma speech recognition requires confirming the language spoken in this recording before transcription begins. Hindi is the active supported language for this phase.
+                      Gnani Prisma speech recognition supports all 10 scheduled Indian languages. Please confirm the language spoken in this recording before transcription begins.
                     </p>
 
                     <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
@@ -430,11 +434,11 @@ export default function Page2Voice() {
                           cursor: "pointer",
                         }}
                       >
-                        <option value="hi-IN">Hindi (hi-IN) — Supported</option>
-                        <option value="or" disabled>Odia (Coming in next release)</option>
-                        <option value="bn" disabled>Bengali (Coming in next release)</option>
-                        <option value="ta" disabled>Tamil (Coming in next release)</option>
-                        <option value="te" disabled>Telugu (Coming in next release)</option>
+                        {LANGUAGE_OPTIONS.map((opt) => (
+                          <option key={opt.code} value={opt.code}>
+                            {opt.name} ({opt.code}) — Supported
+                          </option>
+                        ))}
                       </select>
                     </div>
 
@@ -471,8 +475,8 @@ export default function Page2Voice() {
                         }}
                       >
                         {isLanguageConfirmed
-                          ? "✓ Confirmed: Audio recording is in Hindi for Gnani Prisma STT"
-                          : "I confirm this audio recording is spoken in Hindi"}
+                          ? `✓ Confirmed: Audio recording is in ${currentLangName} for Gnani Prisma STT`
+                          : `I confirm this audio recording is spoken in ${currentLangName}`}
                       </label>
                     </div>
                   </div>
@@ -777,19 +781,19 @@ export default function Page2Voice() {
                   {isTranscribing ? (
                     <>
                       <span className="p-spinner-sm" aria-hidden="true" style={{ display: "inline-block", width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite", marginRight: 8, verticalAlign: "middle" }} />
-                      Transcribing in Hindi with Gnani Prisma…
+                      Transcribing in {currentLangName} with Gnani Prisma…
                     </>
                   ) : transcriptionError ? (
                     <>
-                      Retry Hindi Transcription <span className="p-ar">↻</span>
+                      Retry {currentLangName} Transcription <span className="p-ar">↻</span>
                     </>
                   ) : !isLanguageConfirmed ? (
                     <>
-                      Confirm Hindi Language Above <span className="p-ar">→</span>
+                      Confirm {currentLangName} Language Above <span className="p-ar">→</span>
                     </>
                   ) : (
                     <>
-                      Start Gnani Transcription (Hindi) <span className="p-ar">→</span>
+                      Start Gnani Transcription ({currentLangName}) <span className="p-ar">→</span>
                     </>
                   )}
                 </button>

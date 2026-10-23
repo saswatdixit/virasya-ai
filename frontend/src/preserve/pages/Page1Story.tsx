@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { usePreserve } from "../context/PreserveContext";
+import { useAuth } from "../../auth";
 import { wordCount } from "../utils";
 import {
   STORY_CATEGORIES,
@@ -9,6 +10,7 @@ import {
 
 export default function Page1Story() {
   const { state, updateForm, goToStep, fillSampleStory } = usePreserve();
+  const { user, profile } = useAuth();
   const f = state.form;
 
   const [touched, setTouched] = useState(false);
@@ -68,6 +70,44 @@ export default function Page1Story() {
       {/* Main 2-Column Form Workspace */}
       <div className="p-wrap p-form-workspace">
         <form onSubmit={handleContinue} noValidate>
+          {user && (
+            <div
+              style={{
+                marginBottom: 20,
+                padding: "10px 16px",
+                background: "rgba(184, 93, 50, 0.08)",
+                border: "1px solid rgba(184, 93, 50, 0.25)",
+                borderRadius: 6,
+                fontSize: 13,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              <span>
+                Preserving as: <strong>{profile?.display_name || user.email?.split("@")[0] || "Archivist"}</strong>
+              </span>
+              {!f.carrier && (
+                <button
+                  type="button"
+                  style={{
+                    fontSize: 12,
+                    textDecoration: "underline",
+                    cursor: "pointer",
+                    background: "none",
+                    border: "none",
+                    color: "var(--v-brown)",
+                    padding: 0,
+                  }}
+                  onClick={() => updateForm("carrier", profile?.display_name || user.email?.split("@")[0] || "Storyteller")}
+                >
+                  Use my name as storyteller →
+                </button>
+              )}
+            </div>
+          )}
           <div className="p-grid-two">
             {/* Left Column: Identity & Category */}
             <div className="p-card-panel">

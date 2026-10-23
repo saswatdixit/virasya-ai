@@ -52,7 +52,7 @@ const INITIAL_STATE: PreserveState = {
     carrier: "",
     category: "",
     place: "",
-    language: "Odia",
+    language: "Hindi",
     period: "",
     relationship: "",
     story: "",
@@ -167,7 +167,7 @@ interface PreserveContextType {
 const PreserveContext = createContext<PreserveContextType | null>(null);
 
 export function PreserveProvider({ children }: { children: ReactNode }) {
-  const { user, openAuthModal } = useAuth();
+  const { user, profile, openAuthModal } = useAuth();
   const [state, setState] = useState<PreserveState>(() => {
     // Determine initial stage based on URL if possible
     const path = window.location.pathname.replace(/\/+$/, "") || "/preserve-your-story";
@@ -866,10 +866,17 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   const preserveStoryAction = useCallback(async () => {
     const storyId = state.storyId || `story_${Date.now()}`;
     const workingText = state.punct.manual || state.ed.text || state.form.story || "";
+    const derivedCarrier =
+      (state.form.carrier || "").trim() ||
+      profile?.display_name ||
+      profile?.full_name ||
+      (user?.email ? user.email.split("@")[0] : "") ||
+      "Community contributor";
+
     const payload = {
       id: storyId,
       title: state.form.title,
-      carrier: state.form.carrier,
+      carrier: derivedCarrier,
       category: state.form.category,
       roots: state.form.place,
       place: state.form.place,
@@ -957,7 +964,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     throw new Error(
       "Archival database connection is not available in this environment. Permanent persistence requires an active Supabase connection."
     );
-  }, [state, user, openAuthModal]);
+  }, [state, user, profile, openAuthModal]);
 
   const resetAll = useCallback(() => {
     try {

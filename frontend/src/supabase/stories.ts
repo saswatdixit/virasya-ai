@@ -191,8 +191,12 @@ export async function fetchExploreStoriesFromSupabase(filters?: {
     }
 
     const { data, error } = await query;
-    if (error || !data) {
-      console.warn("Could not query stories from Supabase:", error?.message);
+    if (error) {
+      console.warn("Could not query stories from Supabase:", error.message);
+      throw new Error(error.message);
+    }
+
+    if (!data) {
       return { count: 0, stories: [] };
     }
 
@@ -216,11 +220,11 @@ export async function fetchExploreStoriesFromSupabase(filters?: {
       return {
         id: row.id,
         title: row.title || "Untitled Story",
-        carrier: row.carrier || "Not specified",
+        carrier: (row.carrier || "").trim() || "Community contributor",
         category: row.category || "General",
-        place: row.place || row.roots || "Odisha",
+        place: row.place || row.roots || "India",
         roots: row.roots,
-        language: row.language || "Odia",
+        language: row.language || "Hindi",
         period: row.period || "Traditional",
         relationship: row.relationship || "",
         excerpt: excerpt ? (excerpt.length >= 150 ? `${excerpt}…` : excerpt) : "Oral heritage record",
@@ -239,7 +243,7 @@ export async function fetchExploreStoriesFromSupabase(filters?: {
     };
   } catch (err: any) {
     console.warn("Supabase explore query error:", err.message);
-    return { count: 0, stories: [] };
+    throw err;
   }
 }
 
@@ -272,7 +276,7 @@ export async function fetchExploreStoryDetailFromSupabase(
     return {
       id: data.id,
       title: data.title || "Untitled Story",
-      carrier: data.carrier || "Not specified",
+      carrier: (data.carrier || "").trim() || "Community contributor",
       category: data.category || "General",
       place: data.place || data.roots || "Odisha",
       roots: data.roots,

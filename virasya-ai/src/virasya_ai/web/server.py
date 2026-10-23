@@ -43,7 +43,7 @@ from virasya_ai.transcription.story_storage import (
     save_story,
     save_vocabulary_terms,
 )
-from virasya_ai.web.languages import get_language, language_options_payload
+from virasya_ai.web.languages import get_language, language_options_payload, resolve_language_option
 from virasya_ai.web.workflow import MAX_UPLOAD_BYTES, transcribe_uploaded_audio
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -306,23 +306,23 @@ class StudioHandler(BaseHTTPRequestHandler):
             raise ValueError(f"Audio file '{safe_name}' not found. Please upload it first.")
 
         # Determine and validate language code:
-        # User must explicitly select the audio language. Currently, only Hindi ("hi-IN" or "hi") is supported.
+        # User must explicitly select the audio language from the 10 supported Indic languages.
         raw_lang = payload.get("language") or payload.get("language_code")
         if not raw_lang or not isinstance(raw_lang, str) or not raw_lang.strip():
             self._send_json(
-                {"error": "Audio language is required before transcription. Please select a supported language (Hindi).", "code": "missing_language"},
+                {"error": "Audio language is required before transcription. Please select a supported language.", "code": "missing_language"},
                 HTTPStatus.BAD_REQUEST,
             )
             return
 
-        norm_lang = raw_lang.strip().lower().replace("_", "-")
-        if norm_lang in ("hi", "hi-in", "hindi"):
-            language_code = "hi-IN"
-            requested_language = "Hindi"
-        else:
+        lang_opt = resolve_language_option(raw_lang)
+        if lang_opt is None or not lang_opt.provider_configured:
             raise UnsupportedLanguageError(
-                f"Unsupported language '{raw_lang}'. Gnani Prisma STT currently only supports Hindi ('hi-IN')."
+                f"Unsupported language '{raw_lang}'. Gnani Prisma STT supports: Hindi, Bengali, Gujarati, Kannada, Malayalam, Marathi, Punjabi, Tamil, English (India), Telugu."
             )
+
+        language_code = lang_opt.code
+        requested_language = lang_opt.name
 
         t0 = time.perf_counter()
         with GnaniTranscriptionService() as service:

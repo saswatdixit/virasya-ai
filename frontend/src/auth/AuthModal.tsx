@@ -16,6 +16,7 @@ import "./auth.css";
 export default function AuthModal() {
   const {
     user,
+    profile,
     loading: authLoading,
     isConfigured,
     authModalOpen,
@@ -23,6 +24,7 @@ export default function AuthModal() {
     signInWithOtp,
     verifyOtp,
     signOut,
+    updateProfile,
   } = useAuth();
 
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -31,10 +33,21 @@ export default function AuthModal() {
 
   const [email, setEmail] = useState("");
   const [token, setToken] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
   const [step, setStep] = useState<"email" | "verify">("email");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
+
+  // Sync displayName from profile
+  useEffect(() => {
+    if (profile?.display_name) {
+      setDisplayName(profile.display_name);
+    } else if (user?.email) {
+      setDisplayName(user.email.split("@")[0]);
+    }
+  }, [profile, user]);
 
   // Synchronize native HTML <dialog> lifecycle with authModalOpen
   useEffect(() => {
@@ -136,6 +149,26 @@ export default function AuthModal() {
     }
   };
 
+  // Save profile display name
+  const handleUpdateDisplayName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setInfoMsg(null);
+    const trimmed = displayName.trim();
+    if (!trimmed) {
+      setErrorMsg("Display name cannot be empty.");
+      return;
+    }
+    setSavingProfile(true);
+    const { error } = await updateProfile({ display_name: trimmed });
+    setSavingProfile(false);
+    if (error) {
+      setErrorMsg(error.message);
+    } else {
+      setInfoMsg("Display name saved to profile.");
+    }
+  };
+
   // Sign out
   const handleSignOut = async () => {
     setErrorMsg(null);
@@ -194,6 +227,9 @@ export default function AuthModal() {
 
           <div className="auth-user-card">
             <div className="auth-user-email">{user.email}</div>
+            <div style={{ marginTop: 6, fontSize: 13, color: "var(--v-ink)" }}>
+              Story Author Name: <strong>{profile?.display_name || user.email?.split("@")[0] || "Storyteller"}</strong>
+            </div>
             <div className="auth-user-meta">
               <span className="auth-user-id">ID: {user.id}</span>
               {user.last_sign_in_at && (
@@ -206,6 +242,33 @@ export default function AuthModal() {
               <span className="auth-status-dot" aria-hidden="true" /> Connected to Cloud
             </div>
           </div>
+
+          <form className="auth-profile-form" onSubmit={handleUpdateDisplayName}>
+            <label htmlFor="auth-display-name">ARCHIVIST / STORYTELLER DISPLAY NAME</label>
+            <div className="auth-profile-row">
+              <input
+                id="auth-display-name"
+                type="text"
+                className="auth-profile-input"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Enter your storyteller name"
+                maxLength={80}
+                disabled={savingProfile}
+                autoComplete="name"
+              />
+              <button
+                type="submit"
+                className="auth-profile-save-btn"
+                disabled={savingProfile || !displayName.trim()}
+              >
+                {savingProfile ? "Saving…" : "Save Name"}
+              </button>
+            </div>
+            <p className="auth-profile-hint">
+              This name is attributed to stories you preserve in public.profiles.
+            </p>
+          </form>
 
           {infoMsg && (
             <div className="auth-notice info" role="status">
