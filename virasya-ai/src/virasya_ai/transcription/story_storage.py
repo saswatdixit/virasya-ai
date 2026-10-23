@@ -16,7 +16,48 @@ _VOCAB_LOCK = threading.Lock()
 
 
 def get_data_dir() -> Path:
-    return Path(__file__).resolve().parents[3] / "data"
+    env_dir = os.getenv("VIRASYA_DATA_DIR")
+    if env_dir and env_dir.strip():
+        p = Path(env_dir.strip())
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    default_path = Path(__file__).resolve().parents[3] / "data"
+    try:
+        default_path.mkdir(parents=True, exist_ok=True)
+        return default_path
+    except (OSError, PermissionError):
+        fallback = Path(tempfile.gettempdir()) / "virasya_data"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+def cleanup_stale_scratch_files(scratch_dir: Path, max_age_seconds: float = 3600.0) -> int:
+    """Safely purge transient scratch audio files older than max_age_seconds (default 1 hour)."""
+    now = datetime.now(timezone.utc).timestamp()
+    removed_count = 0
+    if not scratch_dir.exists():
+        return 0
+    try:
+        # Pass 1: Remove stale files
+        for item in list(scratch_dir.rglob("*")):
+            if item.is_file():
+                try:
+                    if (now - item.stat().st_mtime) > max_age_seconds:
+                        item.unlink(missing_ok=True)
+                        removed_count += 1
+                except OSError:
+                    pass
+        # Pass 2: Remove empty subdirectories
+        for item in list(scratch_dir.glob("*")):
+            if item.is_dir() and item != scratch_dir:
+                try:
+                    if not any(item.iterdir()):
+                        item.rmdir()
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return removed_count
 
 
 def get_stories_dir() -> Path:

@@ -11,6 +11,7 @@ import io
 import json
 import mimetypes
 import os
+import threading
 import time
 import urllib.request
 from http import HTTPStatus
@@ -39,6 +40,7 @@ from virasya_ai.exceptions import (
 from virasya_ai.transcription.service import GnaniTranscriptionService
 from virasya_ai.transcription.storage import TranscriptStore
 from virasya_ai.transcription.story_storage import (
+    cleanup_stale_scratch_files,
     get_all_vocabulary,
     get_data_dir,
     get_story,
@@ -58,6 +60,9 @@ INPUT_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
 ALLOWED_AUDIO_EXTENSIONS = {".wav", ".ogg", ".mp3", ".flac", ".m4a", ".aac", ".webm"}
 
+_MAX_CONCURRENT_TRANSCRIBES = int(os.getenv("VIRASYA_MAX_CONCURRENT_TRANSCRIBES", "3"))
+_TRANSCRIPTION_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_TRANSCRIBES)
+
 
 class StudioHandler(BaseHTTPRequestHandler):
     server_version = "VirasyaStudio/2.0"
@@ -67,7 +72,17 @@ class StudioHandler(BaseHTTPRequestHandler):
         return
 
     def _set_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        allowed_env = os.getenv("VIRASYA_ALLOWED_ORIGINS", "*").strip()
+        origin_header = self.headers.get("Origin") or ""
+        if allowed_env == "*":
+            self.send_header("Access-Control-Allow-Origin", "*")
+        else:
+            allowed_list = [o.strip() for o in allowed_env.split(",") if o.strip()]
+            if origin_header in allowed_list:
+                self.send_header("Access-Control-Allow-Origin", origin_header)
+                self.send_header("Vary", "Origin")
+            else:
+                self.send_header("Access-Control-Allow-Origin", allowed_list[0] if allowed_list else "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 
@@ -233,9 +248,26 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Invalid filename."}, HTTPStatus.BAD_REQUEST)
             return
 
-        file_path = INPUT_AUDIO_DIR / safe_name
-        if not file_path.exists() or not file_path.is_file():
-            self._send_json({"error": "Audio file not found."}, HTTPStatus.NOT_FOUND)
+        token = self._extract_bearer_token()
+        user_id: str | None = None
+        if token:
+            user_obj = self._verify_supabase_bearer_token(token)
+            if user_obj and "id" in user_obj:
+                user_id = str(user_obj["id"])
+
+        file_path: Path | None = None
+        if user_id:
+            user_file = INPUT_AUDIO_DIR / user_id / safe_name
+            if user_file.exists() and user_file.is_file():
+                file_path = user_file
+
+        if file_path is None:
+            root_file = INPUT_AUDIO_DIR / safe_name
+            if root_file.exists() and root_file.is_file():
+                file_path = root_file
+
+        if file_path is None or not file_path.is_file():
+            self._send_json({"error": "Audio file not found or unauthorized."}, HTTPStatus.NOT_FOUND)
             return
 
         content_type, _ = mimetypes.guess_type(file_path.name)
@@ -258,6 +290,29 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def _handle_upload(self) -> None:
         """Handle multipart audio upload for the React frontend (/api/upload)."""
+        # Periodic cleanup of stale scratch files (older than 1 hour)
+        cleanup_stale_scratch_files(INPUT_AUDIO_DIR, max_age_seconds=3600.0)
+
+        # Authentication / authorization checks
+        token = self._extract_bearer_token()
+        user_id: str | None = None
+        if token:
+            user_obj = self._verify_supabase_bearer_token(token)
+            if user_obj and "id" in user_obj:
+                user_id = str(user_obj["id"])
+            else:
+                self._send_json(
+                    {"error": "Invalid or expired authorization token.", "code": "UNAUTHORIZED"},
+                    HTTPStatus.UNAUTHORIZED,
+                )
+                return
+        elif os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes"):
+            self._send_json(
+                {"error": "Authentication required. Please sign in to upload audio.", "code": "AUTH_REQUIRED"},
+                HTTPStatus.UNAUTHORIZED,
+            )
+            return
+
         fields = self._multipart_fields()
         file_field = fields["file"] if "file" in fields else fields.get("audio_file")
         if file_field is None or not getattr(file_field, "filename", None):
@@ -284,7 +339,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Audio file is empty (0 bytes).", "code": "EMPTY_FILE"}, HTTPStatus.BAD_REQUEST)
             return
 
-        dest_path = INPUT_AUDIO_DIR / safe_name
+        if user_id:
+            user_dir = INPUT_AUDIO_DIR / user_id
+            user_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = user_dir / safe_name
+        else:
+            dest_path = INPUT_AUDIO_DIR / safe_name
         dest_path.write_bytes(audio_bytes)
 
         # Enforce duration limit <= 60 seconds and decodability at server boundary
@@ -346,14 +406,43 @@ class StudioHandler(BaseHTTPRequestHandler):
             return
 
         # JSON body expected by React frontend: { filename: "...", model: "both|vaani", story_id: "..." }
+        token = self._extract_bearer_token()
+        user_id: str | None = None
+        if token:
+            user_obj = self._verify_supabase_bearer_token(token)
+            if user_obj and "id" in user_obj:
+                user_id = str(user_obj["id"])
+            else:
+                self._send_json(
+                    {"error": "Invalid or expired authorization token.", "code": "UNAUTHORIZED"},
+                    HTTPStatus.UNAUTHORIZED,
+                )
+                return
+        elif os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes"):
+            self._send_json(
+                {"error": "Authentication required. Please sign in to transcribe audio.", "code": "AUTH_REQUIRED"},
+                HTTPStatus.UNAUTHORIZED,
+            )
+            return
+
         payload = self._json_body()
         filename = payload.get("filename")
         if not filename or not isinstance(filename, str):
             raise ValueError("A valid 'filename' string is required for transcription.")
 
         safe_name = sanitize_filename(filename)
-        audio_path = INPUT_AUDIO_DIR / safe_name
-        if not audio_path.exists():
+        audio_path: Path | None = None
+        if user_id:
+            user_file = INPUT_AUDIO_DIR / user_id / safe_name
+            if user_file.exists() and user_file.is_file():
+                audio_path = user_file
+
+        if audio_path is None:
+            root_file = INPUT_AUDIO_DIR / safe_name
+            if root_file.exists() and root_file.is_file():
+                audio_path = root_file
+
+        if audio_path is None:
             raise ValueError(f"Audio file '{safe_name}' not found. Please upload it first.")
 
         # Re-enforce size and duration boundaries before sending to GNANI API
@@ -389,10 +478,24 @@ class StudioHandler(BaseHTTPRequestHandler):
         language_code = lang_opt.code
         requested_language = lang_opt.name
 
-        t0 = time.perf_counter()
-        with GnaniTranscriptionService() as service:
-            res = service.transcribe(audio_path, language_code=language_code)
-        elapsed = round(time.perf_counter() - t0, 3)
+        acquired = _TRANSCRIPTION_SEMAPHORE.acquire(blocking=True, timeout=2.0)
+        if not acquired:
+            self._send_json(
+                {
+                    "error": "Transcription engine is currently at capacity. Please try again shortly.",
+                    "code": "ENGINE_BUSY",
+                },
+                HTTPStatus.TOO_MANY_REQUESTS,
+            )
+            return
+
+        try:
+            t0 = time.perf_counter()
+            with GnaniTranscriptionService() as service:
+                res = service.transcribe(audio_path, language_code=language_code)
+            elapsed = round(time.perf_counter() - t0, 3)
+        finally:
+            _TRANSCRIPTION_SEMAPHORE.release()
 
         transcript_text = res.text.strip()
         provider_name = res.provider or "gnani-prisma-v2.5"
@@ -468,12 +571,21 @@ class StudioHandler(BaseHTTPRequestHandler):
     def _extract_bearer_token(self) -> str | None:
         auth_header = self.headers.get("Authorization") or ""
         if auth_header.startswith("Bearer "):
-            return auth_header[7:].strip()
+            token = auth_header[7:].strip()
+            return token if token else None
         return None
 
     def _verify_supabase_bearer_token(self, token: str) -> dict | None:
-        supabase_url = os.getenv("SUPABASE_URL") or "https://tdpeljbmicgjgxjwsvoc.supabase.co"
-        api_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("VITE_SUPABASE_PUBLISHABLE_KEY") or ""
+        supabase_url = os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL")
+        if not supabase_url:
+            return None
+        api_key = (
+            os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+            or os.getenv("SUPABASE_ANON_KEY")
+            or os.getenv("VITE_SUPABASE_PUBLISHABLE_KEY")
+            or os.getenv("VITE_SUPABASE_ANON_KEY")
+            or ""
+        )
         url = f"{supabase_url.rstrip('/')}/auth/v1/user"
         headers = {"Authorization": f"Bearer {token}"}
         if api_key:
@@ -800,11 +912,14 @@ def create_server(host: str = "127.0.0.1", port: int = 5000) -> ThreadingHTTPSer
 
 
 def main() -> None:
-    host = os.getenv("VIRASYA_WEB_HOST", "127.0.0.1")
+    raw_port = os.getenv("PORT") or os.getenv("VIRASYA_WEB_PORT", "5000")
     try:
-        port = int(os.getenv("VIRASYA_WEB_PORT", "5000"))
+        port = int(raw_port)
     except ValueError as exc:
-        raise SystemExit("VIRASYA_WEB_PORT must be an integer.") from exc
+        raise SystemExit(f"Server port must be an integer (received: '{raw_port}').") from exc
+
+    default_host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
+    host = os.getenv("VIRASYA_WEB_HOST", default_host)
     server = create_server(host, port)
     print(f"Virasya AI Backend running on http://{host}:{port}")
     try:
