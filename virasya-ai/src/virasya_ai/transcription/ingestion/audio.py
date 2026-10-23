@@ -26,9 +26,10 @@ SUPPORTED_SUFFIXES = {
     ".mp3",
     ".m4a",
     ".aac",
+    ".webm",
 }
 MAX_DURATION_SECONDS = 60.0
-_FFMPEG_FALLBACK_SUFFIXES = {".mp3", ".m4a", ".aac"}
+_FFMPEG_FALLBACK_SUFFIXES = {".mp3", ".m4a", ".aac", ".webm"}
 
 
 @dataclass

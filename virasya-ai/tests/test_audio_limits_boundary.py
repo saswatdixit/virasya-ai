@@ -33,3 +33,21 @@ def test_transcribe_rejects_unsupported_suffix():
     with pytest.raises(UploadError) as exc_info:
         transcribe_uploaded_audio(b"some audio data", "test.exe", "hi-IN")
     assert "Unsupported audio format" in str(exc_info.value)
+
+
+def test_supported_suffixes_includes_webm():
+    """Verify that .webm recorded by browser MediaRecorder is in supported suffixes."""
+    from virasya_ai.transcription.ingestion.audio import SUPPORTED_SUFFIXES, _FFMPEG_FALLBACK_SUFFIXES
+    assert ".webm" in SUPPORTED_SUFFIXES
+    assert ".webm" in _FFMPEG_FALLBACK_SUFFIXES
+
+
+def test_duration_verification_rejects_malformed_audio(tmp_path):
+    """Verify that CorruptAudioError is raised for unparsable/corrupt audio data (fail-closed)."""
+    from virasya_ai.transcription.ingestion.audio import audio_duration_seconds
+    from virasya_ai.exceptions import CorruptAudioError
+
+    fake_file = tmp_path / "corrupt.wav"
+    fake_file.write_bytes(b"not a valid wav file data")
+    with pytest.raises(CorruptAudioError):
+        audio_duration_seconds(fake_file)

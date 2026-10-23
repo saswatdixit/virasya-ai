@@ -298,12 +298,24 @@ class StudioHandler(BaseHTTPRequestHandler):
                     HTTPStatus.BAD_REQUEST,
                 )
                 return
+        except AudioTooLongError as exc:
+            dest_path.unlink(missing_ok=True)
+            self._send_json({"error": str(exc), "code": "AUDIO_TOO_LONG"}, HTTPStatus.BAD_REQUEST)
+            return
         except (CorruptAudioError, UnsupportedFormatError, EmptyAudioError) as exc:
             dest_path.unlink(missing_ok=True)
             self._send_json({"error": str(exc), "code": "INVALID_AUDIO"}, HTTPStatus.BAD_REQUEST)
             return
         except Exception:
-            pass
+            dest_path.unlink(missing_ok=True)
+            self._send_json(
+                {
+                    "error": "Failed to decode or verify audio duration. Ensure the file is a valid, supported audio recording.",
+                    "code": "DURATION_VERIFICATION_FAILED",
+                },
+                HTTPStatus.BAD_REQUEST,
+            )
+            return
 
         self._send_json({
             "status": "success",
@@ -353,10 +365,10 @@ class StudioHandler(BaseHTTPRequestHandler):
             dur = audio_duration_seconds(audio_path)
             if dur > MAX_DURATION_SECONDS:
                 raise AudioTooLongError(f"Audio duration ({dur:.1f}s) exceeds the maximum 60-second GNANI API limit.")
-        except (CorruptAudioError, UnsupportedFormatError, AudioTooLongError):
+        except (CorruptAudioError, UnsupportedFormatError, AudioTooLongError, EmptyAudioError):
             raise
-        except Exception:
-            pass
+        except Exception as exc:
+            raise CorruptAudioError(f"Failed to verify audio duration for '{safe_name}': {exc}") from exc
 
         # Determine and validate language code:
         # User must explicitly select the audio language from the 10 supported Indic languages.

@@ -18,6 +18,7 @@
 // Setup type definitions for Supabase Edge Runtime
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { validateAudioBuffer } from "./audio-validator.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -274,8 +275,17 @@ Deno.serve(async (req: Request) => {
       const filename = String(audioInput.filename || audioInput.name || "").trim();
       const storagePath = typeof audioInput.storage_path === "string" ? audioInput.storage_path.trim() : null;
       let bucket = typeof audioInput.bucket === "string" ? audioInput.bucket.trim() : null;
-      const reportedDuration = typeof audioInput.duration === "number" ? audioInput.duration : null;
-      const reportedSize = typeof audioInput.size === "number" ? audioInput.size : null;
+
+      // Fail-closed: audio preservation requires verified storage path
+      if (!storagePath) {
+        return new Response(
+          JSON.stringify({
+            error: "Audio recording requires a verified storage_path in archival cloud storage before preservation.",
+            code: "MISSING_STORAGE_PATH",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
       if (bucket && bucket !== ALLOWED_STORAGE_BUCKET) {
         return new Response(
@@ -286,94 +296,99 @@ Deno.serve(async (req: Request) => {
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      if (storagePath && !bucket) {
-        bucket = ALLOWED_STORAGE_BUCKET;
-      }
+      bucket = ALLOWED_STORAGE_BUCKET;
 
-      // Enforce strict security validation on storage path
-      if (storagePath) {
-        if (storagePath.includes("..") || storagePath.includes("\\") || storagePath.startsWith("/")) {
-          return new Response(
-            JSON.stringify({
-              error: "Malformed storage path. Path traversal and backslashes are strictly forbidden.",
-              code: "MALFORMED_STORAGE_PATH",
-            }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        // Ownership: Path must begin with user.id/
-        const expectedPrefix = `${user.id}/`;
-        if (!storagePath.startsWith(expectedPrefix)) {
-          return new Response(
-            JSON.stringify({
-              error: "Forbidden: Storage path must reside within the authenticated user's directory.",
-              code: "FORBIDDEN_STORAGE_PATH",
-            }),
-            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        // Verify object existence in Supabase Storage using adminClient
-        const objectFileName = storagePath.slice(expectedPrefix.length);
-        const { data: objectList, error: listError } = await adminClient.storage
-          .from(bucket!)
-          .list(user.id, { search: objectFileName, limit: 10 });
-
-        if (listError) {
-          console.error("Storage list error:", listError);
-          return new Response(
-            JSON.stringify({
-              error: `Storage verification failed: ${listError.message}`,
-              code: "STORAGE_VERIFICATION_ERROR",
-            }),
-            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        const foundObject = objectList?.find((o) => o.name === objectFileName);
-        if (!foundObject) {
-          return new Response(
-            JSON.stringify({
-              error: `Referenced audio object '${storagePath}' was not found in storage.`,
-              code: "AUDIO_OBJECT_NOT_FOUND",
-            }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        // Enforce verified size limit <= 5 MiB
-        const actualSizeBytes = foundObject.metadata?.size ?? reportedSize ?? 0;
-        if (actualSizeBytes > MAX_AUDIO_BYTES) {
-          return new Response(
-            JSON.stringify({
-              error: `Audio file size (${actualSizeBytes} bytes) exceeds the 5 MiB (5,242,880 bytes) limit.`,
-              code: "AUDIO_TOO_LARGE",
-            }),
-            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-      }
-
-      // Enforce duration boundary (if client reported duration, must be <= 60s)
-      if (reportedDuration !== null && reportedDuration > MAX_AUDIO_DURATION_SEC) {
+      // Enforce strict security validation on storage path (path traversal prevention)
+      if (storagePath.includes("..") || storagePath.includes("\\") || storagePath.startsWith("/")) {
         return new Response(
           JSON.stringify({
-            error: `Audio duration (${reportedDuration}s) exceeds the maximum limit of 60 seconds.`,
-            code: "AUDIO_TOO_LONG",
+            error: "Malformed storage path. Path traversal and backslashes are strictly forbidden.",
+            code: "MALFORMED_STORAGE_PATH",
           }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
+      // Ownership: Path must begin with user.id/
+      const expectedPrefix = `${user.id}/`;
+      if (!storagePath.startsWith(expectedPrefix)) {
+        return new Response(
+          JSON.stringify({
+            error: "Forbidden: Storage path must reside within the authenticated user's directory.",
+            code: "FORBIDDEN_STORAGE_PATH",
+          }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // SEC-03: Reliable exact-object existence verification & retrieval via direct download
+      // Eliminates prefix matching bugs, list limits, and pagination issues
+      const { data: audioBlob, error: downloadError } = await adminClient.storage
+        .from(bucket)
+        .download(storagePath);
+
+      if (downloadError || !audioBlob) {
+        console.error("Storage download/existence error:", downloadError);
+        return new Response(
+          JSON.stringify({
+            error: `Referenced audio object '${storagePath}' was not found in storage or cannot be retrieved.`,
+            code: "AUDIO_OBJECT_NOT_FOUND",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Enforce verified size limit <= 5 MiB (5,242,880 bytes)
+      const actualSizeBytes = audioBlob.size;
+      if (actualSizeBytes === 0) {
+        return new Response(
+          JSON.stringify({
+            error: "Audio recording file in storage is empty (0 bytes).",
+            code: "EMPTY_AUDIO_FILE",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (actualSizeBytes > MAX_AUDIO_BYTES) {
+        return new Response(
+          JSON.stringify({
+            error: `Audio file size (${actualSizeBytes} bytes) exceeds the 5 MiB (5,242,880 bytes) limit.`,
+            code: "AUDIO_TOO_LARGE",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // SEC-01: Trusted server-side audio container & duration validation
+      // Never treat body.audio.duration as proof of duration!
+      const audioBuffer = new Uint8Array(await audioBlob.arrayBuffer());
+      const ext = "." + (filename.split(".").pop()?.toLowerCase() || storagePath.split(".").pop()?.toLowerCase() || "");
+      const validation = validateAudioBuffer(audioBuffer, ext);
+
+      if (!validation.valid) {
+        return new Response(
+          JSON.stringify({
+            error: validation.error || "Audio validation failed at server boundary.",
+            code: validation.code || "AUDIO_VALIDATION_FAILED",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Use verified duration and verified size from server-side validation
+      const verifiedDuration = validation.durationSeconds;
+      const verifiedSizeBytes = validation.byteSize;
+
       audioPayload = {
         filename: filename || "recording",
         url: audioInput.url || null,
-        size: reportedSize,
-        duration: reportedDuration,
+        size: verifiedSizeBytes,
+        duration: verifiedDuration,
         kind: audioInput.kind || "uploaded",
         storage_path: storagePath,
-        bucket: bucket || (storagePath ? ALLOWED_STORAGE_BUCKET : null),
+        bucket: bucket,
+        verified_format: validation.format,
       };
     }
 
