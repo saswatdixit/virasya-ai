@@ -87,7 +87,11 @@ function ExploreAudioPlayer({
         if (audio.url) {
           setPlaybackSrc(audio.url);
         } else {
-          setErrorMsg("Audio recording is currently unavailable.");
+          const msg =
+            err?.message?.includes("function was not found") || err?.message?.includes("NOT_FOUND")
+              ? "Audio playback service is initializing. Please try again in a few moments."
+              : err?.message || "Audio recording is currently unavailable.";
+          setErrorMsg(msg);
         }
       })
       .finally(() => {
@@ -131,7 +135,11 @@ function ExploreAudioPlayer({
         setErrorMsg("Unable to refresh playback authorization.");
       }
     } catch (e: any) {
-      setErrorMsg(e?.message || "Failed to refresh playback ticket.");
+      const msg =
+        e?.message?.includes("function was not found") || e?.message?.includes("NOT_FOUND")
+          ? "Audio playback service is initializing. Please try again in a few moments."
+          : e?.message || "Failed to refresh playback ticket.";
+      setErrorMsg(msg);
     } finally {
       setIsResolving(false);
     }

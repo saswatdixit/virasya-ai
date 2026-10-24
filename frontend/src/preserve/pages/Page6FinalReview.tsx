@@ -10,6 +10,7 @@ export default function Page6FinalReview() {
     goToStep,
     setVisibility,
     setFinalConfirmed,
+    setAudioPublicConsent,
     preserveStoryAction,
     resetAll,
   } = usePreserve();
@@ -428,6 +429,26 @@ export default function Page6FinalReview() {
                     </span>
                   </label>
                 </div>
+
+                {/* Explicit audio public playback consent if audio is present and visibility is public */}
+                {audio && final.visibility === "public" && (
+                  <div
+                    className={`p-confirm-box ${final.audioPublicConsent ? "is-checked" : ""}`}
+                    style={{ marginTop: 12 }}
+                  >
+                    <label className="p-confirm-label">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(final.audioPublicConsent)}
+                        onChange={(e) => setAudioPublicConsent(e.target.checked)}
+                        className="p-confirm-input"
+                      />
+                      <span className="p-confirm-text">
+                        Allow voice recording to be streamed publicly in Explore archive. If unchecked, your written text and provenance remain public while the audio stays strictly private in your vault.
+                      </span>
+                    </label>
+                  </div>
+                )}
 
                 {validationError && (
                   <p className="p-field-error" role="alert" style={{ marginTop: 10 }}>

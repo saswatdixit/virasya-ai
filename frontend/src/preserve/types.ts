@@ -120,6 +120,7 @@ export interface PreserveState {
     visibility: 'private' | 'family' | 'community' | 'public';
     confirmed: boolean;
     permissionConfirmed: boolean;
+    audioPublicConsent?: boolean;
     isPreserved: boolean;
     isPreviewPreserved?: boolean;
   };
@@ -327,4 +328,73 @@ export const STORAGE_KEY_GUEST = "virasya_story_draft_guest";
 
 export function getDraftStorageKey(userId?: string | null): string {
   return userId ? `virasya_story_draft_user_${userId}` : STORAGE_KEY_GUEST;
+}
+
+export function getDismissedCloudDraftStorageKey(userId?: string | null): string {
+  return userId
+    ? `virasya_dismissed_cloud_draft_user_${userId}`
+    : "virasya_dismissed_cloud_draft_guest";
+}
+
+export function isCloudDraftDismissed(storyId: string, userId?: string | null): boolean {
+  if (!storyId || typeof window === "undefined") return false;
+  try {
+    const key = getDismissedCloudDraftStorageKey(userId);
+    const raw = localStorage.getItem(key);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.includes(storyId);
+    }
+    if (parsed && typeof parsed === "object") {
+      return Boolean(parsed[storyId]);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function markCloudDraftDismissed(storyId: string, userId?: string | null): void {
+  if (!storyId || typeof window === "undefined") return;
+  try {
+    const key = getDismissedCloudDraftStorageKey(userId);
+    const raw = localStorage.getItem(key);
+    let dismissedMap: Record<string, string> = {};
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          dismissedMap = parsed;
+        } else if (Array.isArray(parsed)) {
+          for (const id of parsed) {
+            if (typeof id === "string") dismissedMap[id] = new Date().toISOString();
+          }
+        }
+      } catch {}
+    }
+    dismissedMap[storyId] = new Date().toISOString();
+    localStorage.setItem(key, JSON.stringify(dismissedMap));
+  } catch {}
+}
+
+export function clearCloudDraftDismissed(storyId?: string | null, userId?: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    const key = getDismissedCloudDraftStorageKey(userId);
+    if (!storyId) {
+      localStorage.removeItem(key);
+      return;
+    }
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      delete parsed[storyId];
+      localStorage.setItem(key, JSON.stringify(parsed));
+    } else if (Array.isArray(parsed)) {
+      const filtered = parsed.filter((id) => id !== storyId);
+      localStorage.setItem(key, JSON.stringify(filtered));
+    }
+  } catch {}
 }

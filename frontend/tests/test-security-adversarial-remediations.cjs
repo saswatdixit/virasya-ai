@@ -288,6 +288,160 @@ assert.strictEqual(evaluateAudioPlaybackAccess(privateStory, "attacker_user_id")
 // 7. Unauthenticated access to draft audio: BLOCKED (401)
 assert.strictEqual(evaluateAudioPlaybackAccess(draftWithAudio, null).allowed, false);
 
+// -----------------------------------------------------------------------------
+// Extended Edge Function Simulation: Ownership, Storage Path & Response Minimization
+// -----------------------------------------------------------------------------
+assert(
+  getStoryAudioCode.includes("!story.user_id || story.user_id !== user.id"),
+  "get-story-audio must fail closed when story.user_id is missing or unauthenticated"
+);
+
+assert(
+  getStoryAudioCode.includes("!story.user_id || !storagePath.startsWith"),
+  "get-story-audio must fail closed when audio path cannot be verified against story.user_id"
+);
+
+assert(
+  !getStoryAudioCode.includes("storage_path: storagePath"),
+  "get-story-audio must minimize response data and omit internal storage_path"
+);
+
+assert(
+  !getStoryAudioCode.includes("bucket,"),
+  "get-story-audio must minimize response data and omit internal bucket name"
+);
+
+function simulateGetStoryAudioPlayback(story, callerUserId) {
+  const isPublicPreserved =
+    story.status === "preserved" && story.visibility === "public";
+  const isPublicAudio =
+    isPublicPreserved && Boolean(story.audio_public_playback);
+
+  if (!isPublicAudio) {
+    if (!callerUserId) {
+      return { status: 401, error: "UNAUTHORIZED_PRIVATE_AUDIO" };
+    }
+    if (!story.user_id || story.user_id !== callerUserId) {
+      return { status: 403, error: "FORBIDDEN_AUDIO_ACCESS" };
+    }
+  }
+
+  const audio = story.audio;
+  if (!audio || !audio.storage_path) {
+    return { status: 404, error: "CANONICAL_PATH_MISSING" };
+  }
+
+  const storagePath = audio.storage_path.trim();
+  if (storagePath.includes("..") || storagePath.includes("\\") || storagePath.startsWith("/")) {
+    return { status: 400, error: "MALFORMED_STORAGE_PATH" };
+  }
+
+  if (!story.user_id || !storagePath.startsWith(`${story.user_id}/`)) {
+    return { status: 403, error: "MISMATCHED_STORAGE_OWNER" };
+  }
+
+  return {
+    status: 200,
+    data: {
+      status: "success",
+      signed_url: `https://storage.example.com/${storagePath}?signed=true`,
+      filename: audio.filename || "recording",
+      expires_in: 3600,
+    },
+  };
+}
+
+// Regression 1: A private story with user_id = NULL is denied for both anonymous and authenticated callers
+const orphanedPrivateStory = {
+  id: "s_orphan_private",
+  user_id: null,
+  status: "preserved",
+  visibility: "private",
+  audio_public_playback: false,
+  audio: { storage_path: "user_owner/rec.wav" },
+};
+assert.strictEqual(simulateGetStoryAudioPlayback(orphanedPrivateStory, null).status, 401);
+assert.strictEqual(simulateGetStoryAudioPlayback(orphanedPrivateStory, "any_auth_user").status, 403);
+assert.strictEqual(simulateGetStoryAudioPlayback(orphanedPrivateStory, "any_auth_user").error, "FORBIDDEN_AUDIO_ACCESS");
+
+// Regression 2: A public story with audio consent disabled (false or NULL) cannot be streamed anonymously
+const publicNullConsentStory = {
+  id: "s_pub_null_consent",
+  user_id: "user_owner",
+  status: "preserved",
+  visibility: "public",
+  audio_public_playback: null,
+  audio: { storage_path: "user_owner/rec.wav" },
+};
+assert.strictEqual(simulateGetStoryAudioPlayback(publicNullConsentStory, null).status, 401);
+assert.strictEqual(simulateGetStoryAudioPlayback(publicNullConsentStory, null).error, "UNAUTHORIZED_PRIVATE_AUDIO");
+
+const publicDisabledConsentStory = {
+  id: "s_pub_disabled_consent",
+  user_id: "user_owner",
+  status: "preserved",
+  visibility: "public",
+  audio_public_playback: false,
+  audio: { storage_path: "user_owner/rec.wav" },
+};
+assert.strictEqual(simulateGetStoryAudioPlayback(publicDisabledConsentStory, null).status, 401);
+assert.strictEqual(simulateGetStoryAudioPlayback(publicDisabledConsentStory, null).error, "UNAUTHORIZED_PRIVATE_AUDIO");
+
+// Regression 3: A public story with consent enabled and a valid owner CAN be streamed
+const publicValidOwnerStory = {
+  id: "s_pub_valid",
+  user_id: "user_owner",
+  status: "preserved",
+  visibility: "public",
+  audio_public_playback: true,
+  audio: { storage_path: "user_owner/rec.wav", filename: "story.wav" },
+};
+const publicRes = simulateGetStoryAudioPlayback(publicValidOwnerStory, null);
+assert.strictEqual(publicRes.status, 200);
+assert(publicRes.data.signed_url.includes("https://storage.example.com/user_owner/rec.wav"));
+assert.strictEqual(publicRes.data.storage_path, undefined, "storage_path must be scrubbed from response");
+assert.strictEqual(publicRes.data.bucket, undefined, "bucket must be scrubbed from response");
+
+// Regression 4: A storage path outside the owner's folder is denied
+const mismatchedStorageStory = {
+  id: "s_mismatched",
+  user_id: "user_owner",
+  status: "preserved",
+  visibility: "public",
+  audio_public_playback: true,
+  audio: { storage_path: "attacker_user_id/rec.wav" },
+};
+const mismatchedRes = simulateGetStoryAudioPlayback(mismatchedStorageStory, null);
+assert.strictEqual(mismatchedRes.status, 403);
+assert.strictEqual(mismatchedRes.error, "MISMATCHED_STORAGE_OWNER");
+
+// Regression 5: Existing authenticated owner playback continues to work
+const privateValidOwnerStory = {
+  id: "s_priv_valid",
+  user_id: "user_owner",
+  status: "preserved",
+  visibility: "private",
+  audio_public_playback: false,
+  audio: { storage_path: "user_owner/my_private_rec.wav", filename: "secret.wav" },
+};
+const ownerPlaybackRes = simulateGetStoryAudioPlayback(privateValidOwnerStory, "user_owner");
+assert.strictEqual(ownerPlaybackRes.status, 200);
+assert(ownerPlaybackRes.data.signed_url.includes("user_owner/my_private_rec.wav"));
+assert.strictEqual(ownerPlaybackRes.data.storage_path, undefined);
+assert.strictEqual(ownerPlaybackRes.data.bucket, undefined);
+
+// Additional check: Public story with audio_public_playback = true but user_id = null fails closed
+const publicOrphanStory = {
+  id: "s_pub_orphan",
+  user_id: null,
+  status: "preserved",
+  visibility: "public",
+  audio_public_playback: true,
+  audio: { storage_path: "user_owner/rec.wav" },
+};
+assert.strictEqual(simulateGetStoryAudioPlayback(publicOrphanStory, null).status, 403);
+assert.strictEqual(simulateGetStoryAudioPlayback(publicOrphanStory, null).error, "MISMATCHED_STORAGE_OWNER");
+
 console.log("   ✓ VIR-SEC-002 verified: audio_public_playback, preserved status, and visibility are strictly enforced before issuing audio stream.\n");
 
 // =============================================================================

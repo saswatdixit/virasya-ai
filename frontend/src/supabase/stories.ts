@@ -101,16 +101,21 @@ export async function preserveStoryToSupabase(
     text: workingText,
   });
 
+  // Forward explicit storyteller consent unchanged without defaulting missing consent to true (VIR-SEC-002)
+  const audioPublicPlayback = Boolean(story.audio_public_playback);
+
   // Prepare payload with provenance stored safely in finalSettings JSONB
   const payloadWithProvenance: StoryPayload = {
     ...story,
     id: storyId,
     visibility: story.finalSettings?.visibility || (story as any).visibility || "public",
+    audio_public_playback: audioPublicPlayback,
     finalSettings: {
       ...(story.finalSettings || {}),
       visibility: story.finalSettings?.visibility || (story as any).visibility || "public",
       confirmed: true,
       permissionConfirmed: true,
+      audioPublicConsent: audioPublicPlayback,
       provenance_id: provenanceId,
       provenance_hash: provenanceHash,
       preserved_at: now,
@@ -309,5 +314,72 @@ export async function fetchExploreStoryDetailFromSupabase(
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Permanently discards a specific story draft from Supabase public.stories.
+ *
+ * Strict Security Rules:
+ * - Requires authenticated session
+ * - Restricted to rows where user_id = auth.uid() (matching RLS policy stories_delete_owner)
+ * - Restricted strictly to rows with status = 'draft' (cannot delete preserved stories)
+ * - Targets exact story ID only
+ */
+export async function deleteStoryDraftFromSupabase(
+  storyId: string
+): Promise<{ success: boolean; notFound?: boolean; error?: string }> {
+  if (!storyId) {
+    return { success: false, error: "Missing story draft identifier." };
+  }
+
+  const supabase = getSupabase();
+  if (!supabase || !isSupabaseConfigured()) {
+    return { success: false, error: "Archival database is not configured in this environment." };
+  }
+
+  try {
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser();
+
+    if (authErr || !user) {
+      return { success: false, error: "Authentication required to discard cloud draft." };
+    }
+
+    const { data, error, count } = await (supabase as any)
+      .from("stories")
+      .delete({ count: "exact" })
+      .eq("id", storyId.trim())
+      .eq("user_id", user.id)
+      .eq("status", "draft")
+      .select("id");
+
+    if (error) {
+      console.error("[Supabase] Failed to delete cloud draft:", error);
+      return {
+        success: false,
+        error: error.message || "Failed to delete cloud draft from database.",
+      };
+    }
+
+    const deletedCount = count ?? (Array.isArray(data) ? data.length : 0);
+    if (deletedCount === 0) {
+      console.warn("[Supabase] Delete story draft matched 0 rows for user:", user.id, "storyId:", storyId);
+      return {
+        success: false,
+        notFound: true,
+        error: "Story draft could not be deleted or does not exist in your archive.",
+      };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error("[Supabase] Exception discarding cloud draft:", err);
+    return {
+      success: false,
+      error: err.message || "Network error while discarding cloud draft.",
+    };
   }
 }

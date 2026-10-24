@@ -178,6 +178,11 @@ export function storyRowToStoryPayload(row: StoryRow): StoryPayload {
     visibility: row.visibility,
     confirmed: row.confirmed,
     permissionConfirmed: row.permission_confirmed,
+    audioPublicConsent: Boolean(
+      (row.final_settings as any)?.audioPublicConsent ??
+      (row.final_settings as any)?.audio_public_consent ??
+      (row.status === "preserved" && row.audio_public_playback)
+    ),
     ...(typeof row.final_settings === "object" && row.final_settings !== null ? row.final_settings : {}),
   };
 
@@ -211,6 +216,7 @@ export function storyRowToStoryPayload(row: StoryRow): StoryPayload {
     finalSettings,
     visibility: row.visibility,
     status: row.status,
+    audio_public_playback: Boolean(row.audio_public_playback),
     updated_at: row.updated_at,
     created_at: row.created_at,
     // Supplemental fields supported by Explore and Review pages

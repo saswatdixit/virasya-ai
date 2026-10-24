@@ -157,10 +157,25 @@ export async function getStoryAudioPlaybackUrl(
       body: { story_id: storyId },
     });
 
-    if (!error && data?.signed_url) {
+    if (error) {
+      let detail = error.message;
+      if ((error as any).context && typeof (error as any).context.json === "function") {
+        try {
+          const errJson = await (error as any).context.json();
+          if (errJson?.error) detail = errJson.error;
+        } catch {}
+      }
+      console.warn("[Storage] get-story-audio notice:", detail);
+      if (!options?.storagePath && !options?.fallbackUrl) {
+        throw new Error(detail);
+      }
+    } else if (data?.signed_url) {
       return data.signed_url;
     }
-  } catch (invokeErr) {
+  } catch (invokeErr: any) {
+    if (!options?.storagePath && !options?.fallbackUrl) {
+      throw invokeErr;
+    }
     console.warn("[Storage] get-story-audio invocation notice:", invokeErr);
   }
 

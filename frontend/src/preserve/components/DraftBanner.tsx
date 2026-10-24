@@ -7,9 +7,13 @@ export default function DraftBanner() {
     cloudDraftUpdatedAt,
     resumeFromSaved,
     dismissResume,
+    dismissBanner,
     leaveModalOpen,
     setLeaveModalOpen,
     resetAll,
+    isDiscardingDraft,
+    discardError,
+    clearDiscardError,
   } = usePreserve();
 
   const hasLocal = Boolean(resumeDraft);
@@ -39,7 +43,8 @@ export default function DraftBanner() {
                   <button
                     type="button"
                     className="p-draft-dismiss-btn"
-                    onClick={() => dismissResume("all")}
+                    disabled={isDiscardingDraft}
+                    onClick={dismissBanner}
                     aria-label="Dismiss draft recovery banner"
                     title="Dismiss"
                   >
@@ -61,6 +66,65 @@ export default function DraftBanner() {
                     : "We found an unfinished story draft saved in this browser. You can pick up right where you paused."}
                 </p>
               </div>
+
+              {/* Actionable Discard Error Alert */}
+              {discardError && (
+                <div
+                  className="p-draft-error-msg"
+                  role="alert"
+                  style={{
+                    marginBottom: "14px",
+                    padding: "10px 14px",
+                    background: "#FFEBEE",
+                    border: "1px solid #FFCDD2",
+                    borderRadius: "4px",
+                    color: "#C62828",
+                    fontSize: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "10px",
+                  }}
+                >
+                  <span>
+                    <strong>Error discarding draft:</strong> {discardError}
+                  </span>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      className="p-btn-text"
+                      disabled={isDiscardingDraft}
+                      style={{
+                        color: "#C62828",
+                        fontWeight: 700,
+                        cursor: isDiscardingDraft ? "not-allowed" : "pointer",
+                        opacity: isDiscardingDraft ? 0.6 : 1,
+                        background: "none",
+                        border: "none",
+                        textDecoration: "underline",
+                      }}
+                      onClick={() => dismissResume("all")}
+                    >
+                      {isDiscardingDraft ? "Discarding..." : "Retry Discard"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearDiscardError}
+                      aria-label="Close error"
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#C62828",
+                        cursor: "pointer",
+                        fontSize: "14px",
+                        lineHeight: 1,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Conflict Options Grid */}
               {hasConflict ? (
@@ -89,6 +153,7 @@ export default function DraftBanner() {
                       <button
                         type="button"
                         className="p-draft-discard-link"
+                        disabled={isDiscardingDraft}
                         onClick={() => dismissResume("local")}
                       >
                         Discard local
@@ -126,9 +191,10 @@ export default function DraftBanner() {
                       <button
                         type="button"
                         className="p-draft-discard-link"
+                        disabled={isDiscardingDraft}
                         onClick={() => dismissResume("cloud")}
                       >
-                        Discard cloud
+                        {isDiscardingDraft ? "Discarding..." : "Discard cloud"}
                       </button>
                     </div>
                   </div>
@@ -167,9 +233,10 @@ export default function DraftBanner() {
                     <button
                       type="button"
                       className="p-btn p-btn-ghost"
-                      onClick={() => dismissResume(hasCloud ? "cloud" : "local")}
+                      disabled={isDiscardingDraft}
+                      onClick={() => dismissResume("all")}
                     >
-                      Discard & Start Fresh
+                      {isDiscardingDraft ? "Discarding..." : "Discard & Start Fresh"}
                     </button>
                   </div>
                 </div>

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { usePreserve } from "../context/PreserveContext";
 import { useAuth } from "../../auth";
 import { uploadAudioToPrivateBucket, isSupabaseConfigured } from "../../supabase";
+import { uploadAudioToBackend, isLocalDev } from "../api";
 import { formatTime } from "../utils";
 import AudioPlayer from "../components/AudioPlayer";
 import { LANGUAGE_OPTIONS } from "../types";
@@ -140,7 +141,20 @@ export default function Page2Voice() {
         drawWaveform();
       } catch {}
 
-      const mr = new MediaRecorder(stream);
+      const mimeCandidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/ogg",
+        "audio/mp4",
+        "audio/wav",
+      ];
+      const supportedMime =
+        typeof MediaRecorder !== "undefined" && typeof MediaRecorder.isTypeSupported === "function"
+          ? mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m))
+          : undefined;
+
+      const mr = supportedMime ? new MediaRecorder(stream, { mimeType: supportedMime }) : new MediaRecorder(stream);
       mediaRecorderRef.current = mr;
 
       mr.ondataavailable = (e) => {
@@ -159,7 +173,8 @@ export default function Page2Voice() {
         clearInterval(timerRef.current);
         if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
-        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || "audio/webm" });
+        const resolvedType = mr.mimeType || supportedMime || "audio/webm";
+        const blob = new Blob(audioChunksRef.current, { type: resolvedType });
         if (blob.size === 0) {
           setErr("Recording was empty. Please check your microphone and try again.");
           setRecState("idle");
@@ -172,7 +187,15 @@ export default function Page2Voice() {
           return;
         }
 
-        const ext = mr.mimeType?.includes("ogg") ? "ogg" : "webm";
+        let ext = "webm";
+        if (resolvedType.includes("ogg")) {
+          ext = "ogg";
+        } else if (resolvedType.includes("mp4") || resolvedType.includes("m4a") || resolvedType.includes("aac")) {
+          ext = "m4a";
+        } else if (resolvedType.includes("wav")) {
+          ext = "wav";
+        }
+
         const filename = `recording_${Date.now()}.${ext}`;
         const file = new File([blob], filename, { type: blob.type });
 
@@ -219,6 +242,24 @@ export default function Page2Voice() {
             }
           } catch (cloudErr) {
             console.warn("[Cloud Storage] Upload exception:", cloudErr);
+          }
+        } else if (isLocalDev()) {
+          try {
+            const localRes = await uploadAudioToBackend(file);
+            if (localRes && localRes.status === "success") {
+              setAudio(
+                {
+                  name: localRes.filename || filename,
+                  url: localRes.url || localUrl,
+                  size: blob.size,
+                  duration: finalDur,
+                  kind: "recorded",
+                },
+                file
+              );
+            }
+          } catch (localErr) {
+            console.warn("[Local Upload] Upload exception:", localErr);
           }
         }
 

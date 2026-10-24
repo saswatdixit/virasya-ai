@@ -12,6 +12,7 @@ import {
   preserveStoryToSupabase,
   storyRowToStoryPayload,
   uploadAudioToPrivateBucket,
+  deleteStoryDraftFromSupabase,
 } from "../supabase";
 
 export interface StoryPayload {
@@ -40,6 +41,7 @@ export interface StoryPayload {
     storage_path?: string;
     bucket?: string;
   } | null;
+  audio_public_playback?: boolean;
   transcription_style?: "verbatim" | "transcribe";
   raw_transcripts?: Record<string, any>;
   workingDraft?: string;
@@ -62,6 +64,7 @@ export interface StoryPayload {
     visibility?: string;
     confirmed?: boolean;
     permissionConfirmed?: boolean;
+    audioPublicConsent?: boolean;
     provenance_id?: string;
     provenance_hash?: string;
     preserved_at?: string;
@@ -291,6 +294,16 @@ export async function getUserDraftFromBackend(): Promise<StoryPayload | null> {
     }
   }
   return null;
+}
+
+export async function deleteStoryDraftFromBackend(
+  storyId: string
+): Promise<{ success: boolean; notFound?: boolean; error?: string }> {
+  if (isSupabaseConfigured()) {
+    return deleteStoryDraftFromSupabase(storyId);
+  }
+  // Local browser draft fallback for guest exploration
+  return { success: true };
 }
 
 export async function getStoryFromBackend(storyId: string): Promise<StoryPayload> {
@@ -552,6 +565,38 @@ export async function checkPunctuationCapability(text?: string): Promise<{
   return punctuateTextOnBackend(text || "");
 }
 
+export function extractErrorMessage(err: unknown, fallback: string = "Speech transcription failed."): string {
+  if (!err) return fallback;
+  if (typeof err === "string") {
+    const trimmed = err.trim();
+    if (trimmed && trimmed !== "[object Object]") return trimmed;
+    return fallback;
+  }
+  if (typeof err === "object") {
+    const obj = err as Record<string, any>;
+    if (typeof obj.message === "string" && obj.message.trim() && obj.message !== "[object Object]") {
+      return obj.message.trim();
+    }
+    if (typeof obj.error === "string" && obj.error.trim() && obj.error !== "[object Object]") {
+      return obj.error.trim();
+    }
+    if (typeof obj.error === "object" && obj.error !== null) {
+      return extractErrorMessage(obj.error, fallback);
+    }
+    if (typeof obj.detail === "string" && obj.detail.trim()) {
+      return obj.detail.trim();
+    }
+    if (typeof obj.code === "string" && obj.code.trim()) {
+      return `Error (${obj.code}): ${fallback}`;
+    }
+    try {
+      const json = JSON.stringify(obj);
+      if (json && json !== "{}") return json;
+    } catch {}
+  }
+  return fallback;
+}
+
 export async function transcribeAudioOnBackend(
   filename: string,
   language: string = "hi-IN",
@@ -575,18 +620,21 @@ export async function transcribeAudioOnBackend(
     });
 
     if (error) {
-      let detailMessage = error.message;
+      let detailMessage: string = error.message;
       if ((error as any).context && typeof (error as any).context.json === "function") {
         try {
           const errJson = await (error as any).context.json();
-          if (errJson?.error) detailMessage = errJson.error;
-        } catch {}
+          detailMessage = extractErrorMessage(errJson, error.message);
+        } catch {
+          detailMessage = error.message;
+        }
       }
-      throw new Error(detailMessage || "Speech transcription failed.");
+      throw new Error(extractErrorMessage(detailMessage, "Speech transcription failed."));
     }
 
     if (!data || data.status !== "success") {
-      throw new Error((data as any)?.error || "Speech transcription failed.");
+      const msg = extractErrorMessage((data as any)?.error, "Speech transcription failed.");
+      throw new Error(msg);
     }
 
     return data;

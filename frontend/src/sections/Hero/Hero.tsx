@@ -1,6 +1,20 @@
 import { PreserveStoryIcon } from "../../components/shared/Icons";
+import {
+  isOnboardingCompleted,
+  openOnboardingDialog,
+  navigateTo,
+} from "../../components/shared/onboarding";
 
 export default function Hero() {
+  const handlePreserveClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (isOnboardingCompleted()) {
+      navigateTo("/preserve-your-story");
+    } else {
+      openOnboardingDialog();
+    }
+  };
+
   return (
     <>
       <section className="hero" id="home" aria-labelledby="hero-heading">
@@ -17,7 +31,12 @@ export default function Hero() {
               <br /> Our stories and traditions, kept alive through people.
             </p>
             <div className="hero-actions">
-              <button className="btn" data-start="Starter">
+              <button
+                type="button"
+                className="btn"
+                data-start="Starter"
+                onClick={handlePreserveClick}
+              >
                 <PreserveStoryIcon className="btn-preserve-icon" />
                 <span>Preserve your story</span>{" "}
                 <span className="arrow" aria-hidden={true}>

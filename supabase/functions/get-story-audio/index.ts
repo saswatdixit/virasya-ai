@@ -155,7 +155,7 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      if (story.user_id && story.user_id !== user.id) {
+      if (!story.user_id || story.user_id !== user.id) {
         return new Response(
           JSON.stringify({
             error: "Forbidden: You are not authorized to play this private recording.",
@@ -214,11 +214,11 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Ownership verification: Storage path must match story author ID
-    if (story.user_id && !storagePath.startsWith(`${story.user_id}/`)) {
+    // Ownership verification: Storage path must match verified story author ID
+    if (!story.user_id || !storagePath.startsWith(`${story.user_id}/`)) {
       return new Response(
         JSON.stringify({
-          error: "Storage path does not correspond to the authenticated story author.",
+          error: "Storage path does not correspond to a verified story author.",
           code: "MISMATCHED_STORAGE_OWNER",
         }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -242,13 +242,11 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 7. Return authorized playback ticket
+    // 7. Return authorized playback ticket (scrub internal storage_path and bucket to minimize data exposure)
     return new Response(
       JSON.stringify({
         status: "success",
         signed_url: signData.signedUrl,
-        storage_path: storagePath,
-        bucket,
         filename: audio.filename || "recording",
         expires_in: ttlSeconds,
       }),

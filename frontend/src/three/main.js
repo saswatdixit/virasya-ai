@@ -1,10 +1,10 @@
 import * as THREE from "three";
 import { createManuscriptModel } from "./manuscriptModel.js";
 import { createFloatingDecorations } from "./floatingDecorations.js";
-let initialized = false;
 export function initThreeScene() {
-  if (initialized) return;
-  initialized = true;
+  const heroSceneCheck = document.getElementById("hero-scene");
+  if (!heroSceneCheck) return;
+  if (heroSceneCheck.querySelector("canvas")) return;
 
   (() => {
     "use strict";
@@ -73,7 +73,20 @@ export function initThreeScene() {
       });
     });
     $$("[data-start]").forEach((b) =>
-      b.addEventListener("click", () => {
+      b.addEventListener("click", (e) => {
+        try {
+          const raw = localStorage.getItem("virasya-preview");
+          if (raw) {
+            const saved = JSON.parse(raw);
+            if (saved && typeof saved.name === "string" && saved.name.trim().length > 0) {
+              e.preventDefault();
+              window.history.pushState(null, "", "/preserve-your-story");
+              window.dispatchEvent(new PopStateEvent("popstate"));
+              window.scrollTo({ top: 0, behavior: "instant" });
+              return;
+            }
+          }
+        } catch {}
         activePlan = b.dataset.start;
         $("#selected-plan").textContent =
           activePlan.toUpperCase() + " / YOUR WORKSPACE PREVIEW";
@@ -83,43 +96,48 @@ export function initThreeScene() {
         showDialog($("#start-dialog"));
       }),
     );
-    $("#setup-form").addEventListener("submit", (e) => {
+    $("#setup-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      const name = $("#your-name").value.trim();
+      const name = $("#your-name")?.value.trim() || "";
       if (!name) {
-        $("#your-name").setCustomValidity("Please add your first name.");
-        $("#your-name").reportValidity();
+        $("#your-name")?.setCustomValidity("Please add your first name.");
+        $("#your-name")?.reportValidity();
         return;
       }
-      $("#your-name").setCustomValidity("");
+      $("#your-name")?.setCustomValidity("");
       savedName = name;
       try {
+        const payload = {
+          name,
+          focus: $("#your-focus")?.value || "research",
+          plan: activePlan || "Starter",
+          completed: true,
+          onboardingCompleted: true,
+        };
         localStorage.setItem(
           "virasya-preview",
-          JSON.stringify({
-            name,
-            focus: $("#your-focus")?.value || "research",
-            plan: activePlan,
-          }),
+          JSON.stringify(payload),
         );
-      } catch {}
-      $("#setup-pane").hidden = true;
-      $("#success-pane").hidden = false;
-      $("#welcome-title").textContent = "A little more possible, " + name + ".";
-      $("#start-dialog").setAttribute("aria-labelledby", "welcome-title");
-      $("#open-workspace").focus();
+        const verify = localStorage.getItem("virasya-preview");
+        if (!verify) {
+          throw new Error("Unable to save preferences");
+        }
+      } catch {
+        return;
+      }
+      hideDialog($("#start-dialog"));
+      window.history.pushState(null, "", "/explore");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      window.scrollTo({ top: 0, behavior: "instant" });
     });
     $("#your-name")?.addEventListener("input", () =>
       $("#your-name").setCustomValidity(""),
     );
     $("#open-workspace")?.addEventListener("click", () => {
       hideDialog($("#start-dialog"));
-      const targetSec = $("#integrations");
-      if (targetSec) {
-        targetSec.scrollIntoView({
-          behavior: reduced ? "instant" : "smooth",
-        });
-      }
+      window.history.pushState(null, "", "/explore");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      window.scrollTo({ top: 0, behavior: "instant" });
     });
     $("#privacy-button")?.addEventListener("click", () =>
       showDialog($("#about-dialog")),
@@ -680,6 +698,7 @@ export function initThreeScene() {
       if (document.hidden) return;
       if (dirty) updateLayout();
       if (
+        !document.getElementById("hero-scene") ||
         !renderer ||
         !modelReady ||
         !renderVisible ||

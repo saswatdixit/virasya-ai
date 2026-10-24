@@ -1,4 +1,68 @@
+import React, { useState } from "react";
+import {
+  saveOnboardingData,
+  clearOnboardingData,
+  navigateTo,
+  closeOnboardingDialog,
+} from "./onboarding";
+
 export default function Dialogs() {
+  const [error, setError] = useState<string>("");
+  const [clearStatus, setClearStatus] = useState<string>("");
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const nameInput = form.elements.namedItem("name") as HTMLInputElement | null;
+    const focusSelect = form.elements.namedItem("focus") as HTMLSelectElement | null;
+    const name = nameInput?.value?.trim() || "";
+
+    if (!name) {
+      if (nameInput) {
+        nameInput.setCustomValidity("Please add your first name.");
+        nameInput.reportValidity();
+      }
+      return;
+    }
+
+    if (nameInput) {
+      nameInput.setCustomValidity("");
+    }
+
+    const focus = focusSelect?.value || "research";
+    const saved = saveOnboardingData(name, focus, "Starter");
+
+    if (!saved) {
+      setError(
+        "Unable to save your onboarding preferences. Please check your browser storage settings and try again."
+      );
+      return;
+    }
+
+    setError("");
+    closeOnboardingDialog();
+    navigateTo("/explore");
+  };
+
+  const handleClose = (dialogId: string) => {
+    const dialog = document.getElementById(dialogId) as HTMLDialogElement | null;
+    if (dialog) {
+      if (typeof dialog.close === "function") {
+        dialog.close();
+      }
+      document.body.classList.remove("modal-open");
+    }
+  };
+
+  const handleClearPreferences = () => {
+    clearOnboardingData();
+    const nameInput = document.getElementById("your-name") as HTMLInputElement | null;
+    const focusSelect = document.getElementById("your-focus") as HTMLSelectElement | null;
+    if (nameInput) nameInput.value = "";
+    if (focusSelect) focusSelect.value = "research";
+    setClearStatus("Your saved preferences have been cleared.");
+  };
+
   return (
     <>
       <dialog
@@ -6,7 +70,12 @@ export default function Dialogs() {
         id="start-dialog"
         aria-labelledby="dialog-title"
       >
-        <button className="dialog-close" aria-label="Close workspace preview">
+        <button
+          type="button"
+          className="dialog-close"
+          aria-label="Close workspace preview"
+          onClick={() => handleClose("start-dialog")}
+        >
           ×
         </button>
         <div id="setup-pane">
@@ -24,7 +93,7 @@ export default function Dialogs() {
             Let's give your day a little more room. Make this archive preview
             yours.
           </p>
-          <form id="setup-form">
+          <form id="setup-form" onSubmit={handleSubmit}>
             <label htmlFor="your-name">WHAT SHOULD VIRASYA CALL YOU?</label>
             <input
               id="your-name"
@@ -33,6 +102,11 @@ export default function Dialogs() {
               autoComplete="given-name"
               required
               maxLength={45}
+              onChange={() => {
+                if (error) setError("");
+                const el = document.getElementById("your-name") as HTMLInputElement | null;
+                if (el) el.setCustomValidity("");
+              }}
             />
             <label htmlFor="your-focus">WHAT'S ON YOUR MIND?</label>
             <select id="your-focus" name="focus">
@@ -40,6 +114,15 @@ export default function Dialogs() {
               <option value="create">Making something new</option>
               <option value="coordinate">Keeping the work moving</option>
             </select>
+            {error && (
+              <p
+                className="fine p-field-error"
+                style={{ color: "#d32f2f", marginTop: "8px" }}
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
             <button className="btn ink" type="submit">
               Let's find your flow <span className="arrow">↗</span>
             </button>
@@ -71,7 +154,12 @@ export default function Dialogs() {
         id="about-dialog"
         aria-labelledby="about-title"
       >
-        <button className="dialog-close" aria-label="Close about preview">
+        <button
+          type="button"
+          className="dialog-close"
+          aria-label="Close about preview"
+          onClick={() => handleClose("about-dialog")}
+        >
           ×
         </button>
         <span className="mark dialog-mark" aria-hidden={true}>
@@ -91,10 +179,17 @@ export default function Dialogs() {
           accounts, or messages. Your optional first name and preferred workflow
           are saved only on this device.
         </p>
-        <button className="btn ink" id="clear-preview">
+        <button
+          type="button"
+          className="btn ink"
+          id="clear-preview"
+          onClick={handleClearPreferences}
+        >
           Clear my saved preferences <span className="arrow">↗</span>
         </button>
-        <p className="fine" id="clear-status" aria-live="polite"></p>
+        <p className="fine" id="clear-status" aria-live="polite">
+          {clearStatus}
+        </p>
       </dialog>
     </>
   );

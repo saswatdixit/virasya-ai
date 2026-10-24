@@ -68,6 +68,7 @@ export interface DbFinalSettings {
   visibility?: string;
   confirmed?: boolean;
   permissionConfirmed?: boolean;
+  audioPublicConsent?: boolean;
   [key: string]: Json | undefined;
 }
 

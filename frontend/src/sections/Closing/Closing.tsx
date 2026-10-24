@@ -1,14 +1,23 @@
 import { PreserveStoryIcon } from "../../components/shared/Icons";
+import {
+  isOnboardingCompleted,
+  openOnboardingDialog,
+  navigateTo as spaNavigate,
+} from "../../components/shared/onboarding";
 
 export default function Closing() {
+  const handlePreserveClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    if (isOnboardingCompleted()) {
+      spaNavigate("/preserve-your-story");
+    } else {
+      openOnboardingDialog();
+    }
+  };
+
   const navigateTo = (e: React.MouseEvent<HTMLAnchorElement>, path: string) => {
     e.preventDefault();
-    const current = window.location.pathname.replace(/\/+$/, "") || "/";
-    if (current !== path) {
-      window.history.pushState(null, "", path);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    }
-    window.scrollTo({ top: 0, behavior: "instant" });
+    spaNavigate(path);
   };
 
   return (
@@ -37,7 +46,7 @@ export default function Closing() {
             <a
               className="btn"
               href="/preserve-your-story"
-              onClick={(e) => navigateTo(e, "/preserve-your-story")}
+              onClick={handlePreserveClick}
             >
               <PreserveStoryIcon className="btn-preserve-icon" />
               <span>Preserve your story</span> <span className="arrow">↗</span>
