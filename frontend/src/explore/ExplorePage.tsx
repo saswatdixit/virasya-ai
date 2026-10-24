@@ -645,7 +645,7 @@ export default function ExplorePage() {
                 </div>
 
                 {/* Preserved Audio Recording If Present */}
-                {detailStory.audio && (detailStory.audio.url || detailStory.audio.storage_path) && (
+                {detailStory.audio && (detailStory.has_audio ?? true) && (
                   <ExploreAudioPlayer storyId={detailStory.id} audio={detailStory.audio} />
                 )}
 
