@@ -5,25 +5,27 @@
 Virasya's authentication system is designed around sovereign archival principles:
 - **Zero-Block Guest Access**: Storytellers can preserve oral narratives, record audio, and explore the archive freely without being forced to create an account.
 - **Modal Dialogue Pattern**: Sign-in is delivered through an accessible native modal (`<AuthModal />`), preserving the visitor's context rather than redirecting to a disjointed, standalone screen.
-- **Clean Architecture Boundary**: The active frontend defines strong TypeScript boundaries (`AuthUser`, `AuthSession`, `AuthContextType`) that match Supabase's API surface without prematurely requiring npm dependencies until credentials are ready.
-- **Server-Side Secret Separation**: Only the public `anon` or publishable key is ever permitted in the browser. High-privilege service-role keys and AI provider keys (`GNANI_API_KEY`) remain strictly server-side.
+- **Clean Architecture Boundary**: The active frontend defines strong TypeScript boundaries (`AuthUser`, `AuthSession`, `AuthContextType`) that match Supabase's API surface.
+- **Server-Side Secret Separation**: Only the public `anon` or publishable client key is ever permitted in the browser. High-privilege service-role keys and AI provider keys (`GNANI_API_KEY`) remain strictly server-side.
 
 ---
 
 ## 2. Active Frontend Implementation
 
-The frontend at `D:\Codes\gnani.ai\frontend` contains the authentic authentication UI and architecture:
+The frontend located in the `frontend/` directory contains the authentic authentication UI and architecture:
 
 ### 2.1. Files Implemented
 
 1. **`src/auth/types.ts`**
    - Defines `AuthUser`, `AuthSession`, `AuthError`, and `AuthContextType`.
-   - Matches Supabase's shape without requiring `@supabase/supabase-js` to be installed prematurely.
+   - Represents user profile metadata (`UserProfile`: `id`, `email`, `display_name`, `avatar_url`).
 
-2. **`src/auth/AuthContext.tsx`**
-   - Context provider managing `user`, `session`, `loading`, `isConfigured`, and modal state (`authModalOpen`, `openAuthModal`, `closeAuthModal`).
-   - Checks `import.meta.env.VITE_SUPABASE_URL` and `import.meta.env.VITE_SUPABASE_ANON_KEY`.
-   - In offline preview mode, gracefully informs the user without throwing runtime exceptions or pretending authentication succeeded.
+2. **`src/auth/AuthContext.ts`**
+   - Application-wide context provider managing `user`, `session`, `loading`, `isConfigured`, and modal state (`authModalOpen`, `openAuthModal`, `closeAuthModal`).
+   - Uses the singleton Supabase client from `src/supabase/client.ts`.
+   - Subscribes to authentication lifecycle changes via `supabase.auth.onAuthStateChange` with automatic session refresh and token persistence.
+   - Automatically synchronizes authenticated user profile records with the `public.profiles` database table.
+   - In offline/unconfigured preview mode, gracefully informs the user without throwing runtime exceptions or pretending authentication succeeded.
 
 3. **`src/auth/AuthModal.tsx` & `src/auth/auth.css`**
    - Authentic modal UI with Virasya cream/ink styling, accessible focus handling, backdrop click dismiss, OTP input formatting, and "Continue as Guest" fallback.
@@ -36,124 +38,60 @@ The frontend at `D:\Codes\gnani.ai\frontend` contains the authentic authenticati
    - Root application wrapped in `<AuthProvider>` with `<AuthModal />` mounted globally.
    - Deep-linking support: Loading `/login`, `/profile`, or `/signup` directly renders the main layout and triggers `openAuthModal()`. When closed, URL cleanly reverts to `/`.
 
-6. **Removed Obsolete Standalone Screens**
-   - Removed `src/login/LoginPage.tsx` and `src/login/login.css` in favor of the modal dialogue.
-
 ---
 
 ## 3. Environment Variables
 
-When configuring Supabase for production or staging, configure these variables in `.env` or Vite environment:
+When configuring Supabase for production or staging, configure these variables in `frontend/.env.local` or hosting provider settings (Vercel):
 
 ```env
 # Supabase Project Endpoint (must use https)
 VITE_SUPABASE_URL=https://<your-project-ref>.supabase.co
 
 # Supabase Anonymous/Publishable Client Key (NEVER use service_role key here)
+VITE_SUPABASE_PUBLISHABLE_KEY=eyJhbGciOi...
+# Note: VITE_SUPABASE_ANON_KEY is also accepted as a backward-compatible alias
 VITE_SUPABASE_ANON_KEY=eyJhbGciOi...
 ```
 
 > [!CAUTION]
-> Never place `SUPABASE_SERVICE_ROLE_KEY` or `GNANI_API_KEY` into `frontend/.env` or Vite client-exposed variables.
+> Never place `SUPABASE_SERVICE_ROLE_KEY` or `GNANI_API_KEY` into `frontend/.env` or Vite client-exposed variables. The frontend client validates at runtime that no `service_role` key is provided.
 
 ---
 
-## 4. Supabase Client & Lifecycle Integration Reference
+## 4. Supabase Client Architecture (`src/supabase/client.ts`)
 
-When ready to install `@supabase/supabase-js`, use the following production-tested singleton client pattern:
+The frontend uses `@supabase/supabase-js` (`^2.118.0`) configured as a singleton with runtime safety checks:
 
 ```typescript
-/**
- * src/supabase/client.ts
- */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const env =
-  typeof import.meta !== "undefined" && import.meta.env
-    ? import.meta.env
-    : ({} as Record<string, string | undefined>);
-
-const rawUrl = (env.VITE_SUPABASE_URL || "").trim();
-const rawKey = (
-  env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  env.VITE_SUPABASE_ANON_KEY ||
-  ""
-).trim();
-
-export interface SupabaseConfigStatus {
-  configured: boolean;
-  urlConfigured: boolean;
-  keyConfigured: boolean;
-  isHttps: boolean;
-  isServiceRoleDetected: boolean;
-  message?: string;
-}
-
-function checkIsServiceRoleKey(key: string): boolean {
-  if (!key || !key.includes(".")) return false;
-  try {
-    const parts = key.split(".");
-    if (parts.length >= 2) {
-      const payload = JSON.parse(atob(parts[1]));
-      return payload.role === "service_role";
-    }
-  } catch {
-    // ignore decoding errors
-  }
-  return false;
-}
-
-export function getSupabaseConfigStatus(): SupabaseConfigStatus {
-  const urlConfigured = rawUrl.length > 0;
-  const keyConfigured = rawKey.length > 0;
-  const isHttps = /^https:\/\//i.test(rawUrl);
-  const isServiceRoleDetected = checkIsServiceRoleKey(rawKey);
-
-  const configured = urlConfigured && keyConfigured && !isServiceRoleDetected;
-
-  let message = "Supabase is ready.";
-  if (!urlConfigured && !keyConfigured) {
-    message = "Supabase credentials are not configured in environment variables.";
-  } else if (!urlConfigured) {
-    message = "VITE_SUPABASE_URL is missing.";
-  } else if (!keyConfigured) {
-    message = "VITE_SUPABASE_PUBLISHABLE_KEY / VITE_SUPABASE_ANON_KEY is missing.";
-  } else if (isServiceRoleDetected) {
-    message = "SECURITY WARNING: Service role key detected. Only the anon/publishable key may be used in the frontend.";
-  }
-
-  return { configured, urlConfigured, keyConfigured, isHttps, isServiceRoleDetected, message };
-}
-
-export function isSupabaseConfigured(): boolean {
-  return getSupabaseConfigStatus().configured;
-}
-
-let supabaseInstance: SupabaseClient | null = null;
-
-export function getSupabase(): SupabaseClient | null {
-  const status = getSupabaseConfigStatus();
-  if (!status.configured) return null;
-
-  if (!supabaseInstance) {
-    supabaseInstance = createClient(rawUrl, rawKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
-    });
-  }
-  return supabaseInstance;
-}
+// Validates URL format and rejects service_role keys in the browser bundle
+export function getSupabaseConfigStatus(): SupabaseConfigStatus;
+export function isSupabaseConfigured(): boolean;
+export function getSupabase(): SupabaseClient | null;
 ```
 
 ---
 
-## 5. Next Steps for Full Supabase Activation
+## 5. Live Supabase Activation Checklist
 
-When the user requests activating live Supabase Auth:
-1. Run `npm --prefix frontend install @supabase/supabase-js`.
-2. Add `src/supabase/client.ts` using the reference implementation above.
-3. In `frontend/src/auth/AuthContext.tsx`, hook up `getSupabase().auth.onAuthStateChange` and live `signInWithOtp` / `verifyOtp` calls.
-4. Verify email delivery or OTP codes with a live Supabase project.
+To connect the application to a live Supabase project:
+1. Provide valid `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in `frontend/.env.local` or Vercel environment variables.
+2. Ensure the database migrations in `supabase/migrations/` have been executed on the target instance (creates `profiles`, `stories`, `vocabulary`, RLS policies, and triggers).
+3. In Supabase Dashboard > Authentication > URL Configuration, set:
+   - **Site URL:** `https://your-domain.vercel.app` (or `http://localhost:5173` for local dev)
+   - **Redirect URLs:** `https://your-domain.vercel.app/**`
+4. In Supabase Dashboard > Authentication > Providers > Email, enable Email provider (Magic Link / OTP).
+
+---
+
+## 6. Python Backend Authentication Boundary (`virasya_ai.web.server`)
+
+The Python backend studio server does **not** manage its own user accounts, database credentials, or password hashes. Instead:
+- When `VIRASYA_REQUIRE_AUTH=false` (default for local development), all endpoints are accessible without authentication headers.
+- When `VIRASYA_REQUIRE_AUTH=true`:
+  1. Incoming requests to `/api/upload`, `/api/audio/<filename>`, `/api/save`, and `/api/stories/<id>/preserve` must supply an `Authorization: Bearer <token>` header.
+  2. The Python server extracts the Bearer token and verifies it by querying Supabase Auth's user endpoint: `GET {SUPABASE_URL}/auth/v1/user`.
+  3. If the token is valid, the request proceeds with the verified `user_id`; otherwise, the server returns `401 Unauthorized`.
+- Requires `SUPABASE_URL` and optionally `SUPABASE_ANON_KEY` or `SUPABASE_SERVICE_ROLE_KEY` configured in `virasya-ai/.env`.

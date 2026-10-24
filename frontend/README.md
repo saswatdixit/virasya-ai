@@ -2,6 +2,10 @@
 
 An interactive, cinematic web platform that transforms heritage and cultural memories into lasting legacy. Built with modern React 19, TypeScript, Vite, and Three.js.
 
+> [!NOTE]
+> **Canonical Platform Documentation:** For comprehensive platform specifications, see [**`PRD.md`**](../Documentations/PRD.md), [**`ARCHITECTURE.md`**](../Documentations/ARCHITECTURE.md), and [**`API_REFERENCE.md`**](../Documentations/API_REFERENCE.md).
+> For authentication architecture, see [**`SUPABASE_AUTH_INTEGRATION.md`**](docs/SUPABASE_AUTH_INTEGRATION.md).
+
 ---
 
 ## Architecture & Overview
@@ -87,8 +91,8 @@ The application is structured as a production-grade React application featuring 
 
 | Script | Command | Description |
 |---|---|---|
-| `npm run dev` | `node tools/dev-runner.js` | **Unified start**: Concurrently launches Flask AI backend (port 5000) and Vite frontend (port 5173) with health monitoring |
-| `npm run backend` | `virasya-ai/.venv/Scripts/python ...` | Starts only the local Flask AI workbench service (port 5000) |
+| `npm run dev` | `node tools/dev-runner.js` | **Unified start**: Concurrently launches Python AI backend (port 5000) and Vite frontend (port 5173) with health monitoring |
+| `npm run backend` | `virasya-ai/.venv/Scripts/python ...` | Starts only the local Python AI workbench service (port 5000) |
 | `npm run vite` | `vite` | Starts only the Vite frontend dev server (port 5173) |
 | `npm run build` | `tsc -b && vite build` | Type-checks and bundles production build |
 | `npm test` | `node tests/...` | Runs regression tests for map geometry and 6-step workflow definitions |
@@ -102,7 +106,7 @@ The application is structured as a production-grade React application featuring 
 Virasya's oral history preservation workflow is structured into 6 clear, sovereign stages:
 
 1. **Step 1 — Your Story (`/preserve-your-story`):** Core metadata, narrative context, storyteller lineage, and place of origin.
-2. **Step 2 — Your Voice (`/preserve-your-story/voice`):** Microphone recording or audio file upload (MP3, WAV, OGG, M4A, FLAC, WebM up to 50 MB) stored locally in `virasya-ai/data/input/`.
+2. **Step 2 — Your Voice (`/preserve-your-story/voice`):** Microphone recording or audio file upload (MP3, WAV, OGG, M4A, FLAC, WebM up to 5 MiB / 60 seconds) with duration verification and format inspection.
 3. **Step 3 — Transcript Review (`/preserve-your-story/review`):** Real dual-model ASR transcription using Vaani (FastConformer) and IndicConformer ONNX pipelines with side-by-side comparison.
 4. **Step 4 — Cultural Vocabulary (`/preserve-your-story/vocabulary`):** Curate and preserve dialect terms, heritage vocabulary, and oral phrases.
 5. **Step 5 — Punctuation Review (`/preserve-your-story/punctuation`):** Honest manual editorial cadence review. Includes an Odia punctuation palette (`।`, `॥`, `,`, `?`, `“ ”`, `!`, `—`) to protect authentic oral phrasing from hallucinated AI punctuation.
@@ -112,10 +116,10 @@ Virasya's oral history preservation workflow is structured into 6 clear, soverei
 
 ## Backend Diagnostics & Health Monitoring
 
-- **Unified Runner:** `npm run dev` monitors both services. If Flask or Vite terminates unexpectedly, the runner cleanly kills the child process tree and logs the exit reason.
-- **Backend Health Check:** `GET http://127.0.0.1:5000/api/health` returns service status and model readiness for Vaani and IndicConformer.
-- **Vite Proxy:** All `/api/*` routes are proxied to `http://127.0.0.1:5000`. If Flask is unreachable, the proxy returns structured JSON (`BACKEND_UNAVAILABLE`) and the UI renders a `<BackendStatusBanner />` with a retry trigger.
-- **Pytest Suite:** Run `virasya-ai/.venv/Scripts/python -m pytest virasya-ai/tests/workbench/ -v` to verify all 25 backend workbench tests.
+- **Unified Runner:** `npm run dev` monitors both services. If the Python backend or Vite terminates unexpectedly, the runner cleanly kills the child process tree and logs the exit reason.
+- **Backend Health Check:** `GET http://127.0.0.1:5000/api/health` returns service status and model readiness.
+- **Vite Proxy:** All `/api/*` routes are proxied to `http://127.0.0.1:5000`. If the Python server is unreachable, the proxy returns structured JSON (`BACKEND_UNAVAILABLE`) and the UI renders a `<BackendStatusBanner />` with a retry trigger.
+- **Pytest Suite:** Run `pytest tests` inside `virasya-ai/` to verify all 73 backend tests.
 
 ---
 

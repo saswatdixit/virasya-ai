@@ -1,52 +1,43 @@
-# Architecture Overview
+# Architecture Overview — Virasya AI Subproject
 
-## High‑Level Diagram
-```mermaid
-flowchart TD
-    subgraph LocalDev[Local Development Environment]
-        CLI[CLI (`virasya`)] --> Service[GnaniTranscriptionService]
-        Web[Flask Web Workspace (`virasya-web`)] --> Service
-        Service --> Provider[Gnani Prisma STT API]
-    end
-    subgraph Runtime[Runtime Artifacts]
-        Data[data/output/transcriptions.json]
-        Env[.env (API key)]
-    end
-    Service --> Data
-    Service --> Env
-```
-
-## Components
-| Component | Language / Tech | Role |
-|-----------|----------------|------|
-| **CLI (`src/virasya_ai/cli.py`)** | Python | Parses arguments, validates audio, calls the transcription service, optionally writes a text file. |
-| **Web Server (`src/virasya_ai/web/server.py`)** | Flask (Python) | Serves HTML/JS UI, handles file upload, invokes the same transcription service, persists results. |
-| **Transcription Service (`src/virasya_ai/transcription/service.py`)** | Python (`requests`) | Thin HTTP client for the Gnani Prisma STT endpoint; builds request payload, parses JSON response into a `TranscriptionResult`. |
-| **Audio Validation (`src/virasya_ai/transcription/ingestion/audio.py`)** | Python (`ffmpeg` invoked via subprocess) | Checks format, duration (≤ 60 s), and size; raises `AudioError` on failure. |
-| **Configuration (`src/virasya_ai/config.py`)** | Python | Loads environment variables, reads `.env` (via `dotenv`), defines constants such as `DEFAULT_LANGUAGE`. |
-| **Storage (`src/virasya_ai/transcription/storage.py`)** | Python (JSON) | Persists transcript records to `data/output/transcriptions.json`; provides atomic write to avoid corruption. |
-| **Language Mapping (`src/virasya_ai/web/languages.py`)** | Python dict | Supplies the dropdown options displayed in the web UI; maps human‑readable names to provider language codes. |
-| **Tests (`tests/` folder)** | pytest | Unit tests for audio validation, service request/response handling (mocked), CLI end‑to‑end flow, and the Flask routes. |
-| **Makefile** | Make | Simple shortcut (`make test`) that runs `pytest`. |
-
-## Data Flow (CLI & Web)
-1. **Input** – User supplies a local audio file and selects a language.
-2. **Validation** – `validate_audio_file` ensures the file meets format & duration constraints.
-3. **Service Call** – `GnaniTranscriptionService.transcribe` builds a `multipart/form-data` POST request with the audio file, language code, and `verbatim=true`.
-4. **Provider Response** – JSON containing the transcript text (and optional confidence) is returned.
-5. **Result Handling** – The service returns a `TranscriptionResult` object containing `text` and metadata.
-6. **Persistence** – `storage.save_record` appends a new entry to `data/output/transcriptions.json`.
-7. **Output** – CLI prints the transcript or writes it to a file; the web UI displays the raw text, allows editing, and saves the reviewed version.
-
-## Build & Install
-- The project uses **PEP 517/518** build metadata (`pyproject.toml`).
-- `setuptools` creates console scripts `virasya` and `virasya-web` during `pip install .`.
-- Dependencies are locked in `requirements.lock`; `requirements.txt` is a minimal list for quick installs.
-
-## Deployment Considerations
-- **Secrets** – `GNANI_API_KEY` must never be committed; it is read from the environment or a local `.env` file (ignored by Git).
-- **Scalability** – The Flask server runs on `localhost` by default; for production you would run behind a WSGI server (Gunicorn) and add TLS.
-- **Extensibility** – Adding a new provider only requires implementing a new `TranscriptionService` subclass and updating `web/languages.py` if new language codes are needed.
+> [!NOTE]
+> **Canonical Platform Architecture:** For full cross-tier platform architecture, sequence diagrams, and cloud topologies, see [**`ARCHITECTURE.md`**](../Documentations/ARCHITECTURE.md).
 
 ---
-*Document created by Antigravity (agy) as part of the repository cleanup.*
+
+## Python Subproject Architecture (`virasya-ai`)
+
+```mermaid
+flowchart TD
+    subgraph CLIWorkspace[CLI & Web Workspace]
+        CLI[CLI Entry Point: virasya_ai.cli]
+        Server[Studio Server: virasya_ai.web.server]
+    end
+
+    subgraph CoreEngine[Acoustic & Transcription Engine]
+        Ingestion[Audio Ingestion: virasya_ai.transcription.ingestion.audio]
+        Service[Gnani Service: virasya_ai.transcription.service]
+        Storage[JSON Storage: virasya_ai.transcription.storage]
+    end
+
+    subgraph ExternalProvider[Third-Party Provider]
+        GnaniAPI[Gnani.ai Prisma STT REST API: api.vachana.ai/stt/v3]
+    end
+
+    CLI --> Ingestion
+    Server --> Ingestion
+    Ingestion --> Service
+    Service --> GnaniAPI
+    Service --> Storage
+```
+
+### Module Responsibilities
+* **`virasya_ai.cli`:** Positional `audio_path` and optional `-o/--output` parsing, exit code mapping, and stdout / file writing.
+* **`virasya_ai.web.server`:** Python standard library `ThreadingHTTPServer` handling 18 REST endpoints for local preview and development.
+* **`virasya_ai.transcription.ingestion.audio`:** Format allowlisting, file size enforcement (≤ 5 MiB), and duration checks (≤ 60s) via `soundfile` with `ffmpeg` subprocess fallback.
+* **`virasya_ai.transcription.service`:** Outbound HTTP client (`requests`) targeting Gnani Prisma STT v2.5 with `X-API-Key-ID` header.
+* **`virasya_ai.transcription.storage`:** Atomic JSON persistence appending to `data/output/transcriptions.json`.
+* **`virasya_ai.config`:** Environment variable loading from `.env` and defaults.
+* **Authentication Boundary:** Downstream resource server validating Supabase JWT Bearer tokens via `GET /auth/v1/user` when `VIRASYA_REQUIRE_AUTH=true`. See [`SUPABASE_AUTH_INTEGRATION.md`](../frontend/docs/SUPABASE_AUTH_INTEGRATION.md).
+
+For public HTTP and CLI interfaces, see the canonical [**`API_REFERENCE.md`**](../Documentations/API_REFERENCE.md).

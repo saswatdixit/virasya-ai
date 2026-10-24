@@ -18,8 +18,8 @@ From the repository root, with temporary Shapely dependencies installed outside
 the repository:
 
 ```powershell
-$env:PYTHONPATH='C:\Users\saswa\AppData\Local\Temp\omnirush\map-conversion-deps'
-python public/maps/convert-india-outline.py
+pip install shapely
+python tools/maps/convert-india-outline.py
 ```
 
 Source metadata: geoBoundaries GB Open India ADM1, release
