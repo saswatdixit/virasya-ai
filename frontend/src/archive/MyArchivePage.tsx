@@ -2,11 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import "./myArchive.css";
 import Header from "../components/layout/Header";
 import { useAuth } from "../auth";
-import { listStoriesFromBackend, deleteStoryDraftFromBackend, type StoryPayload } from "../preserve/api";
-import { getStoryAudioPlaybackUrl, deleteAudioFromPrivateBucket, isSupabaseConfigured } from "../supabase";
-import { getDraftStorageKey, clearCloudDraftDismissed } from "../preserve/types";
+import { listStoriesFromBackend, type StoryPayload } from "../preserve/api";
+import { getStoryAudioPlaybackUrl, isSupabaseConfigured } from "../supabase";
 
-type ArchiveTab = "all" | "private" | "public" | "drafts";
+type ArchiveTab = "all" | "private" | "public";
 
 export default function MyArchivePage() {
   const { user, openAuthModal } = useAuth();
@@ -22,11 +21,6 @@ export default function MyArchivePage() {
   const [audioError, setAudioError] = useState<string | null>(null);
   const readerDialogRef = useRef<HTMLDialogElement>(null);
   const audioRequestIdRef = useRef<number>(0);
-
-  // Draft discard confirmation state
-  const [confirmDeleteDraft, setConfirmDeleteDraft] = useState<StoryPayload | null>(null);
-  const [isDeletingDraft, setIsDeletingDraft] = useState<boolean>(false);
-  const [deleteDraftError, setDeleteDraftError] = useState<string | null>(null);
 
   // Fetch stories on mount or user identity change
   useEffect(() => {
@@ -142,77 +136,8 @@ export default function MyArchivePage() {
     setResolvingAudio(false);
   };
 
-  const handleConfirmDeleteDraft = async () => {
-    if (!confirmDeleteDraft || isDeletingDraft) return;
-    const target = confirmDeleteDraft;
-    const targetId = target.id;
-    if (!targetId) return;
-
-    // Security invariant: never allow deletion of preserved stories
-    if (target.status === "preserved" || target.provenance_id || target.finalSettings?.provenance_id) {
-      setDeleteDraftError("Preserved cultural stories cannot be deleted.");
-      return;
-    }
-
-    setIsDeletingDraft(true);
-    setDeleteDraftError(null);
-
-    try {
-      const res = await deleteStoryDraftFromBackend(targetId);
-
-      // Successfully deleted from authoritative database
-      if (res.success) {
-        // 1. Audio object storage cleanup if draft contained recorded audio
-        if (target.audio?.storage_path && user?.id) {
-          const cleanPath = target.audio.storage_path.trim();
-          // Ownership verification: path must strictly begin with user.id/ and have no traversal
-          if (
-            cleanPath.startsWith(`${user.id}/`) &&
-            !cleanPath.includes("..") &&
-            !cleanPath.includes("\\")
-          ) {
-            deleteAudioFromPrivateBucket(cleanPath).catch((err) => {
-              console.warn("[MyArchive] Audio file storage cleanup notice:", err);
-            });
-          }
-        }
-
-        // 2. Clear matching local storage draft & recovery markers
-        if (user?.id) {
-          const storageKey = getDraftStorageKey(user.id);
-          try {
-            const raw = localStorage.getItem(storageKey);
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              if (parsed?.storyId === targetId) {
-                localStorage.removeItem(storageKey);
-              }
-            }
-          } catch {}
-          clearCloudDraftDismissed(targetId, user.id);
-        }
-
-        // 3. Remove deleted draft from UI state
-        setStories((prev) => prev.filter((s) => s.id !== targetId));
-        setConfirmDeleteDraft(null);
-        setDeleteDraftError(null);
-      } else {
-        setDeleteDraftError(
-          res.error || "Failed to delete story draft from repository. Please try again."
-        );
-      }
-    } catch (err: any) {
-      setDeleteDraftError(
-        err?.message || "An unexpected error occurred while deleting the story draft."
-      );
-    } finally {
-      setIsDeletingDraft(false);
-    }
-  };
-
-  // Filter stories
+  // Filter stories: My Archive exclusively displays preserved cultural records
   const preservedStories = stories.filter((s) => s.status === "preserved");
-  const draftStories = stories.filter((s) => s.status === "draft");
 
   const privatePreserved = preservedStories.filter(
     (s) => s.visibility === "private" || s.finalSettings?.visibility === "private"
@@ -228,8 +153,6 @@ export default function MyArchivePage() {
     displayedStories = privatePreserved;
   } else if (activeTab === "public") {
     displayedStories = publicPreserved;
-  } else if (activeTab === "drafts") {
-    displayedStories = draftStories;
   }
 
   // Calculate total words preserved
@@ -351,17 +274,6 @@ export default function MyArchivePage() {
                   >
                     Public Heritage ({publicPreserved.length})
                   </button>
-                  {draftStories.length > 0 && (
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={activeTab === "drafts"}
-                      className={`archive-tab-btn ${activeTab === "drafts" ? "is-active" : ""}`}
-                      onClick={() => setActiveTab("drafts")}
-                    >
-                      In-Progress Drafts ({draftStories.length})
-                    </button>
-                  )}
                 </div>
 
                 <a href="/preserve-your-story" className="archive-cta-btn">
@@ -401,8 +313,6 @@ export default function MyArchivePage() {
                       ? "No Private Stories in Vault"
                       : activeTab === "public"
                       ? "No Public Stories Preserved"
-                      : activeTab === "drafts"
-                      ? "No Active Drafts"
                       : "No Preserved Stories Yet"}
                   </h2>
                   <p className="archive-notice-desc">
@@ -441,11 +351,7 @@ export default function MyArchivePage() {
                       <article key={story.id} className="archive-story-card">
                         <div className="archive-card-top">
                           <div className="archive-badge-group">
-                            {isDraft ? (
-                              <span className="archive-pill" style={{ background: "#fef3c7", color: "#b45309" }}>
-                                In-Progress Draft
-                              </span>
-                            ) : isPrivate ? (
+                            {isPrivate ? (
                               <span className="archive-pill private">Private (Only You)</span>
                             ) : (
                               <span className="archive-pill public">Public Heritage</span>
@@ -453,24 +359,6 @@ export default function MyArchivePage() {
                             <span className="archive-pill prov">{provId}</span>
                             {story.audio && <span className="archive-pill audio">Master Audio</span>}
                           </div>
-
-                          {/* Subtle × button for eligible in-progress drafts */}
-                          {isDraft && !story.provenance_id && (
-                            <button
-                              type="button"
-                              className="archive-draft-delete-btn"
-                              aria-label={`Discard draft "${story.title || "Untitled Story"}"`}
-                              title="Discard this draft permanently"
-                              disabled={isDeletingDraft && confirmDeleteDraft?.id === story.id}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeleteDraftError(null);
-                                setConfirmDeleteDraft(story);
-                              }}
-                            >
-                              ×
-                            </button>
-                          )}
                         </div>
 
                         <h3 className="archive-story-title">{story.title || "Untitled Story"}</h3>
@@ -660,58 +548,6 @@ export default function MyArchivePage() {
           </div>
         )}
       </dialog>
-
-      {/* Confirm Delete Draft Dialog Modal */}
-      {confirmDeleteDraft && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-draft-title"
-          className="archive-confirm-overlay"
-        >
-          <div className="archive-confirm-card">
-            <h3 id="delete-draft-title" className="archive-confirm-title">
-              Discard In-Progress Draft?
-            </h3>
-            <p className="archive-confirm-text">
-              Are you sure you want to permanently delete{" "}
-              <strong>"{confirmDeleteDraft.title || "Untitled Story"}"</strong>? This will remove all
-              unsaved draft narrative and recorded audio from your Private Vault. This action cannot
-              be undone.
-            </p>
-
-            {deleteDraftError && (
-              <div className="archive-confirm-error" role="alert">
-                ⚠️ {deleteDraftError}
-              </div>
-            )}
-
-            <div className="archive-confirm-actions">
-              <button
-                type="button"
-                className="archive-tab-btn"
-                onClick={() => {
-                  if (!isDeletingDraft) {
-                    setConfirmDeleteDraft(null);
-                    setDeleteDraftError(null);
-                  }
-                }}
-                disabled={isDeletingDraft}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="archive-delete-confirm-btn"
-                onClick={handleConfirmDeleteDraft}
-                disabled={isDeletingDraft}
-              >
-                {isDeletingDraft ? "Discarding Draft…" : "Permanently Discard Draft"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

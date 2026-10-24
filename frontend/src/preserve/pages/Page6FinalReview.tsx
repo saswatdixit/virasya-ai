@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
 import { usePreserve } from "../context/PreserveContext";
 import { wordCount } from "../utils";
 import AudioPlayer from "../components/AudioPlayer";
@@ -19,6 +19,9 @@ export default function Page6FinalReview() {
 
   const [validationError, setValidationError] = useState("");
   const [isPreserving, setIsPreserving] = useState(false);
+  const [showAudioPrivacyDialog, setShowAudioPrivacyDialog] = useState(false);
+  const [hasConfirmedPrivateAudio, setHasConfirmedPrivateAudio] = useState(false);
+  const audioDialogRef = useRef<HTMLDialogElement | null>(null);
 
   // Fall back unsupported disabled options (community/family) to 'private'
   useEffect(() => {
@@ -27,16 +30,43 @@ export default function Page6FinalReview() {
     }
   }, [final.visibility, setVisibility]);
 
+  // Reset confirmation if audio, visibility, or consent changes so altered settings re-prompt
+  useEffect(() => {
+    setHasConfirmedPrivateAudio(false);
+  }, [audio, final.visibility, final.audioPublicConsent]);
+
+  // Synchronize HTML <dialog> lifecycle
+  useEffect(() => {
+    const dialog = audioDialogRef.current;
+    if (!dialog) return;
+    if (showAudioPrivacyDialog) {
+      if (!dialog.open) {
+        try {
+          dialog.showModal();
+        } catch {
+          dialog.setAttribute("open", "true");
+        }
+      }
+    } else {
+      if (dialog.open) {
+        try {
+          dialog.close();
+        } catch {
+          dialog.removeAttribute("open");
+        }
+      }
+    }
+  }, [showAudioPrivacyDialog]);
+
   // Carry forward punctuated manual text, or fall back to transcript draft or form story
   const finalText = punct.manual !== null ? punct.manual : (ed.text || form.story || "");
   const finalWordCount = wordCount(finalText);
 
-  const handlePreserve = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!final.confirmed) {
-      setValidationError("Please check the confirmation box below to verify your story before preserving.");
-      return;
-    }
+  const isPublicAudioPlaybackEnabled = Boolean(
+    audio && final.visibility === "public" && final.audioPublicConsent
+  );
+
+  const executePreservation = async () => {
     setValidationError("");
     setIsPreserving(true);
     try {
@@ -45,6 +75,47 @@ export default function Page6FinalReview() {
       setValidationError(err.message || "Failed to preserve story. Please try again.");
     } finally {
       setIsPreserving(false);
+    }
+  };
+
+  const handlePreserve = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!final.confirmed) {
+      setValidationError("Please check the confirmation box below to verify your story before preserving.");
+      return;
+    }
+
+    // Part D: Audio privacy confirmation dialog
+    // When audio is attached and public playback is not enabled, prompt for confirmation once
+    if (audio && !isPublicAudioPlaybackEnabled && !hasConfirmedPrivateAudio) {
+      setShowAudioPrivacyDialog(true);
+      return;
+    }
+
+    await executePreservation();
+  };
+
+  const handleContinueWithPrivateAudio = async () => {
+    setHasConfirmedPrivateAudio(true);
+    setShowAudioPrivacyDialog(false);
+    await executePreservation();
+  };
+
+  const handleGoBackFromAudioDialog = () => {
+    setShowAudioPrivacyDialog(false);
+  };
+
+  const handleDialogBackdropClick = (e: React.MouseEvent<HTMLDialogElement>) => {
+    const dialog = audioDialogRef.current;
+    if (!dialog) return;
+    const rect = dialog.getBoundingClientRect();
+    const isInDialog =
+      rect.top <= e.clientY &&
+      e.clientY <= rect.top + rect.height &&
+      rect.left <= e.clientX &&
+      e.clientX <= rect.left + rect.width;
+    if (!isInDialog) {
+      handleGoBackFromAudioDialog();
     }
   };
 
@@ -489,6 +560,70 @@ export default function Page6FinalReview() {
           </div>
         </form>
       </div>
+
+      {/* Part D: Audio Privacy Confirmation Dialog */}
+      <dialog
+        ref={audioDialogRef}
+        className="dialog p-audio-privacy-dialog"
+        aria-labelledby="audio-privacy-title"
+        aria-describedby="audio-privacy-desc"
+        onClick={handleDialogBackdropClick}
+        onCancel={(e) => {
+          e.preventDefault();
+          handleGoBackFromAudioDialog();
+        }}
+      >
+        <button
+          type="button"
+          className="dialog-close"
+          onClick={handleGoBackFromAudioDialog}
+          aria-label="Close dialog"
+        >
+          ×
+        </button>
+
+        <div className="eyebrow" style={{ color: "var(--v-terracotta)", marginBottom: 8, fontSize: 11, fontWeight: 700, letterSpacing: "0.1em" }}>
+          06 / SOVEREIGN AUDIO PRIVACY
+        </div>
+
+        <h2 id="audio-privacy-title" style={{ fontSize: 26, margin: "0 0 16px", color: "var(--v-ink)", fontFamily: "var(--v-font-head)" }}>
+          Keep Audio Recording Private?
+        </h2>
+
+        <div id="audio-privacy-desc" style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24, fontSize: 13, lineHeight: 1.6, color: "var(--v-ink)" }}>
+          <p style={{ margin: 0 }}>
+            Your story visibility is set to <strong>{final.visibility === "public" ? "Public Heritage Archive" : "Private (Only You)"}</strong>. The story will be preserved according to this setting.
+          </p>
+          <p style={{ margin: 0, padding: "10px 14px", background: "rgba(184, 93, 50, 0.08)", border: "1px solid rgba(184, 93, 50, 0.25)", borderRadius: 6 }}>
+            <strong>Audio Playback:</strong> Because public audio playback is not enabled, your original voice recording (<em>{audio?.name || "recording"}</em>) will remain strictly private in your sovereign vault and will <strong>not</strong> be available for public playback in Explore.
+          </p>
+          <p style={{ margin: 0, color: "var(--v-muted)" }}>
+            {final.visibility === "public"
+              ? "Your written narrative, cultural vocabulary, and provenance certificate will still be publicly readable in Explore."
+              : "All text, metadata, and audio will remain completely confidential to your account."}
+          </p>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <button
+            type="button"
+            className="p-btn p-btn-brass"
+            onClick={handleContinueWithPrivateAudio}
+            style={{ width: "100%", justifyContent: "center" }}
+            autoFocus
+          >
+            Continue with private audio
+          </button>
+          <button
+            type="button"
+            className="p-btn p-btn-ghost"
+            onClick={handleGoBackFromAudioDialog}
+            style={{ width: "100%", justifyContent: "center" }}
+          >
+            Go back
+          </button>
+        </div>
+      </dialog>
     </div>
   );
 }

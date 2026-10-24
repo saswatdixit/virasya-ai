@@ -66,112 +66,38 @@ check(
   'Must export helper functions for managing draft dismissal markers'
 );
 
-// B. DraftBanner.tsx wiring: × button must call dismissBanner, NOT dismissResume
+// B. Complete Draft Feature Removal from Preserve Workflow
 check(
-  'DraftBanner consumes dismissBanner from usePreserve',
-  bannerSrc.includes('dismissBanner') &&
-    bannerSrc.includes('usePreserve()'),
-  'DraftBanner must consume dismissBanner'
+  'DraftBanner is disabled and returns null, eliminating all draft recovery banners and 6/6 indicators',
+  bannerSrc.includes('return null;'),
+  'DraftBanner must return null to eliminate all draft recovery banners'
 );
 
 check(
-  'DraftBanner × button invokes persistent deletion via dismissBanner',
-  bannerSrc.includes('onClick={dismissBanner}'),
-  'Close (×) button must invoke dismissBanner'
+  'PreserveApp does not mount DraftBanner in the preservation layout',
+  !fs.readFileSync(path.join(__dirname, '../src/preserve/PreserveApp.tsx'), 'utf8').includes('<DraftBanner />'),
+  'PreserveApp must not render DraftBanner'
 );
 
 // C. PreserveContext.tsx mount & recovery logic
 check(
-  'PreserveContext checks isCloudDraftDismissed before populating cloudDraft on mount/refresh',
-  contextSrc.includes('isCloudDraftDismissed(cloudStory.id || "", user.id)'),
-  'Context must verify if cloud draft has been dismissed before displaying banner'
+  'PreserveContext purges all legacy draft keys from localStorage to prevent draft resurrection',
+  contextSrc.includes('localStorage.removeItem(activeStorageKey)') &&
+    contextSrc.includes('localStorage.removeItem(STORAGE_KEY_GUEST)') &&
+    contextSrc.includes('localStorage.removeItem(STORAGE_KEY)'),
+  'PreserveContext must actively purge legacy draft keys on mount'
 );
 
 check(
-  'dismissBanner delegates to dismissResume("all") for real persistent deletion',
-  contextSrc.includes('const dismissBanner = useCallback(') &&
-    contextSrc.includes('dismissResume("all")'),
-  'dismissBanner must call dismissResume("all") to permanently delete draft from database'
+  'PreserveContext eliminates draft autosave to prevent resurrecting completed uploads',
+  !contextSrc.includes('localStorage.setItem(activeStorageKey'),
+  'Must not persist debounced drafts to localStorage'
 );
 
 check(
-  'resumeFromSaved clears dismissal marker when user resumes draft',
-  contextSrc.includes('clearCloudDraftDismissed(chosenDraft.storyId, user?.id)'),
-  'Resuming a draft must invalidate the dismissal marker'
-);
-
-// D. Discard & Database Deletion in stories.ts
-check(
-  'deleteStoryDraftFromSupabase exported',
-  storiesSrc.includes('export async function deleteStoryDraftFromSupabase('),
-  'stories.ts must export deleteStoryDraftFromSupabase'
-);
-
-check(
-  'deleteStoryDraftFromSupabase requires authenticated user',
-  storiesSrc.includes('auth.getUser()') &&
-    storiesSrc.includes('deleteStoryDraftFromSupabase') &&
-    storiesSrc.includes('Authentication required to discard cloud draft'),
-  'Must verify user authentication before deleting'
-);
-
-check(
-  'deleteStoryDraftFromSupabase filters by storyId, user.id, and status="draft"',
-  storiesSrc.includes('.from("stories")') &&
-    storiesSrc.includes('.delete(') &&
-    storiesSrc.includes('.eq("id", storyId') &&
-    storiesSrc.includes('.eq("user_id", user.id)') &&
-    storiesSrc.includes('.eq("status", "draft")') &&
-    storiesSrc.includes('.select("id")'),
-  'Must restrict deletion to exact storyId, owner user.id, and status="draft" returning id'
-);
-
-check(
-  'deleteStoryDraftFromSupabase detects zero-row deletion and reports explicit failure',
-  storiesSrc.includes('deletedCount === 0') &&
-    storiesSrc.includes('Story draft could not be deleted or does not exist in your archive'),
-  'Must not silently claim deletion succeeded when 0 rows were affected'
-);
-
-// E. PreserveContext discard flow & race prevention
-check(
-  'dismissResume deletes cloud draft and clears dismissal marker',
-  contextSrc.includes('deleteStoryDraftFromBackend(targetCloudId)') &&
-    contextSrc.includes('clearCloudDraftDismissed(targetCloudId, user?.id)'),
-  'Discarding must delete from database and clear local dismissal marker'
-);
-
-check(
-  'dismissResume generates fresh storyId (uid()) on starting fresh',
-  contextSrc.includes('const freshStoryId = uid();') &&
-    contextSrc.includes('storyId: freshStoryId,'),
-  'Starting fresh must generate a new story ID'
-);
-
-check(
-  'Debounced auto-save prevents saving empty/default state to localStorage',
-  contextSrc.includes('const hasSubstantiveContent = Boolean(') &&
-    contextSrc.includes('if (!hasSubstantiveContent) return;'),
-  'Auto-save effect must verify state has substantive content before saving'
-);
-
-check(
-  'MyArchivePage does not filter out drafts marked as banner-dismissed',
-  !archiveSrc.includes('isCloudDraftDismissed'),
-  'MyArchivePage must display user drafts regardless of whether the recovery banner was dismissed'
-);
-
-// F. Issue 1 Enhancement: Comprehensive Single-Draft Discard & Clean Reset
-check(
-  'DraftBanner single draft Discard button calls dismissResume("all")',
-  bannerSrc.includes('dismissResume("all")'),
-  'Single draft banner must invoke dismissResume with "all" to clean up cloud and local storage'
-);
-
-check(
-  'PreserveContext checks isCloudDraftDismissed on local resumeDraft during mount',
-  contextSrc.includes('!isCloudDraftDismissed(d.storyId || "", user?.id)'),
-  'Mount effect must check local draft ID against dismissal markers'
+  'PreserveContext goToStep does not asynchronously persist drafts to database',
+  !contextSrc.includes('saveStoryToBackend'),
+  'Navigation between steps must be strictly in-memory during active session'
 );
 
 check(
@@ -240,36 +166,34 @@ check(
   'Page2Voice must upload recorded audio in local dev mode'
 );
 
-// I. Issue 2: Private Vault In-Progress Draft Card Deletion
+// I. Complete Draft Elimination from Private Vault (MyArchivePage)
 check(
-  'MyArchivePage renders subtle × discard button for eligible in-progress drafts',
-  archiveSrc.includes('archive-draft-delete-btn') &&
-    archiveSrc.includes('isDraft && !story.provenance_id'),
-  'MyArchivePage must provide a discard button only on unpreserved in-progress drafts'
+  'MyArchivePage exclusively displays preserved stories and filters out unpreserved drafts',
+  archiveSrc.includes('const preservedStories = stories.filter((s) => s.status === "preserved");') &&
+    archiveSrc.includes('type ArchiveTab = "all" | "private" | "public";'),
+  'MyArchivePage must only display preserved stories and contain no drafts tab'
 );
 
 check(
-  'MyArchivePage opens confirmation dialog identifying draft by title',
-  archiveSrc.includes('confirmDeleteDraft') &&
-    archiveSrc.includes('confirmDeleteDraft.title') &&
-    archiveSrc.includes('Discard In-Progress Draft?'),
-  'Confirmation dialog must identify the draft title before deleting'
+  'MyArchivePage contains no draft cards, discard buttons, or draft counts',
+  !archiveSrc.includes('archive-draft-delete-btn') &&
+    !archiveSrc.includes('draftStories') &&
+    !archiveSrc.includes('In-Progress Drafts'),
+  'MyArchivePage must not render draft tabs, counters, or draft discard buttons'
 );
 
 check(
-  'MyArchivePage prevents deleting preserved stories or stories with provenance',
-  archiveSrc.includes('target.status === "preserved"') &&
-    archiveSrc.includes('target.provenance_id') &&
-    archiveSrc.includes('Preserved cultural stories cannot be deleted'),
-  'Client-side guard must reject deletion attempts on preserved stories'
+  'MyArchivePage contains no draft deletion confirmation dialog modal',
+  !archiveSrc.includes('Discard In-Progress Draft?') &&
+    !archiveSrc.includes('confirmDeleteDraft'),
+  'MyArchivePage must not maintain draft discard dialog state'
 );
 
 check(
-  'MyArchivePage permanently deletes draft using deleteStoryDraftFromBackend and cleans storage',
-  archiveSrc.includes('deleteStoryDraftFromBackend(targetId)') &&
-    archiveSrc.includes('deleteAudioFromPrivateBucket(cleanPath)') &&
-    archiveSrc.includes('cleanPath.startsWith(`${user.id}/`)'),
-  'Draft deletion must invoke backend deletion and safely clean up owner-verified audio storage'
+  'PreserveContext actively purges all persistent draft keys and eliminates autosave',
+  contextSrc.includes('localStorage.removeItem(activeStorageKey)') &&
+    !contextSrc.includes('localStorage.setItem(activeStorageKey'),
+  'PreserveContext must purge legacy draft keys and never write debounced autosave'
 );
 
 // J. Issue 3: PostgreSQL BEFORE DELETE Trigger Migration Verification

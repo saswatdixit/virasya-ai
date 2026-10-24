@@ -27,7 +27,6 @@ import {
   STORAGE_KEY_GUEST,
   getDraftStorageKey,
   LANGUAGE_OPTIONS,
-  isCloudDraftDismissed,
   clearCloudDraftDismissed,
 } from "../types";
 
@@ -37,8 +36,6 @@ import {
   punctItems,
 } from "../utils";
 import {
-  saveStoryToBackend,
-  getUserDraftFromBackend,
   deleteStoryDraftFromBackend,
   preserveStoryOnBackend,
   transcribeAudioOnBackend,
@@ -194,112 +191,6 @@ interface PreserveContextType {
 
 const PreserveContext = createContext<PreserveContextType | null>(null);
 
-function cloudDraftToPreserveState(story: any): PreserveState {
-  const form: StoryForm = {
-    title: story.title || "",
-    carrier: story.carrier || "",
-    category: story.category || "",
-    place: story.place || story.roots || "",
-    language: story.language || "Hindi",
-    period: story.period || "",
-    relationship: story.relationship || "",
-    story: story.writtenText || story.written_text || story.story || "",
-    email: story.email || "",
-  };
-
-  const audioItem: AudioItem | null = story.audio
-    ? {
-        name: story.audio.filename || story.audio.name || "cloud-audio",
-        url: story.audio.url || null,
-        size: story.audio.size ?? null,
-        duration: story.audio.duration ?? null,
-        kind: story.audio.storage_path ? "uploaded" : ((story.audio.kind as any) || "lost"),
-        storage_path: story.audio.storage_path,
-        bucket: story.audio.bucket,
-      }
-    : null;
-
-  let derivedStage = 1;
-  if (audioItem || form.story) derivedStage = 2;
-  const rawTx = story.raw_transcripts || {};
-  if (story.workingDraft || story.working_draft || (rawTx && Object.keys(rawTx).length > 0)) derivedStage = 3;
-  if (Array.isArray(story.vocabulary) && story.vocabulary.length > 0) derivedStage = 4;
-  if (story.punctuation && (story.punctuation.finalText || Object.keys(story.punctuation).length > 0)) derivedStage = 5;
-
-  const workingText = story.workingDraft || story.working_draft || story.writtenText || story.written_text || story.story || "";
-
-  const rawVisibility =
-    story.visibility ||
-    story.finalSettings?.visibility ||
-    story.final_settings?.visibility ||
-    "public";
-
-  const validVisibility =
-    rawVisibility === "public" || rawVisibility === "private"
-      ? rawVisibility
-      : "private";
-
-  return {
-    stage: derivedStage,
-    storyId: story.id,
-    completed: {},
-    skipped: {},
-    form,
-    audio: audioItem,
-    transcriptionStyle: story.transcription_style || "verbatim",
-    tx: {
-      forAudio: audioItem ? audioItem.name : "",
-      gnani: rawTx.gnani || { status: "idle", p: 0, text: "" },
-      vaani: rawTx.vaani || { status: "idle", p: 0, text: "" },
-      conformer: rawTx.indicconformer || rawTx.conformer || { status: "idle", p: 0, text: "" },
-    },
-    enh: {
-      status: "idle",
-      base: "vaani",
-      decisions: {},
-    },
-    ed: {
-      text: workingText,
-      loadedFrom: workingText ? "draft" : null,
-      baseText: workingText,
-      drafts: [],
-      notice: "",
-      undoStack: workingText ? [workingText] : [],
-    },
-    vocab: Array.isArray(story.vocabulary)
-      ? story.vocabulary.map((v: any) => ({
-          id: v.id || uid(),
-          heard: v.heard || "",
-          preferred: v.preferred || "",
-          meaning: v.meaning || "",
-          language: v.language || form.language,
-          context: v.context || "",
-          kind: v.kind,
-          pronunciation: v.pronunciation,
-          isSample: false,
-        }))
-      : [],
-    punct: {
-      status: "idle",
-      decisions: {},
-      manual: story.punctuation?.finalText || null,
-      done: Boolean(story.punctuation?.finalText),
-    },
-    final: {
-      visibility: validVisibility as any,
-      confirmed: Boolean(story.finalSettings?.confirmed || story.final_settings?.confirmed),
-      permissionConfirmed: Boolean(story.finalSettings?.permissionConfirmed || story.final_settings?.permission_confirmed),
-      audioPublicConsent: Boolean(
-        story.finalSettings?.audioPublicConsent ??
-        story.final_settings?.audio_public_consent ??
-        story.final_settings?.audioPublicConsent ??
-        (story.status === "preserved" ? story.audio_public_playback : false)
-      ),
-      isPreserved: false,
-    },
-  };
-}
-
 export function PreserveProvider({ children }: { children: ReactNode }) {
   const { user, profile, openAuthModal } = useAuth();
   const [state, setState] = useState<PreserveState>(() => {
@@ -333,101 +224,22 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   }, [sim]);
 
   const activeStorageKey = getDraftStorageKey(user?.id);
-  const prevUserIdRef = useRef<string | null | undefined>(user?.id);
 
-  // Check localStorage and Supabase for previous draft on mount or user identity change (VIR-SEC-006)
+  // Actively purge all legacy draft keys from localStorage to prevent draft resurrection
   useEffect(() => {
-    let active = true;
-    const prevId = prevUserIdRef.current;
-    prevUserIdRef.current = user?.id;
-
     try {
-      // 1. If switching from one authenticated user to a different user, or logout:
-      if (prevId !== undefined && prevId !== user?.id) {
-        // Always reset in-memory state so previous user's draft is not shown on screen
-        setState({ ...INITIAL_STATE, storyId: uid() });
-        setResumeDraft(null);
-        setCloudDraft(null);
-        setCloudDraftUpdatedAt(null);
-        setCloudDraftStoryId(null);
-        setDiscardError(null);
-        discardedDraftIdsRef.current.clear();
-        if (!user?.id) {
-          // Logged out: return early after clearing in-memory presentation
-          return;
-        }
-      }
-
-      // 2. Check user-scoped local draft
-      let raw = localStorage.getItem(activeStorageKey);
-
-      // 3. If guest just signed in, migrate guest draft into their user-scoped storage key
-      if (!raw && user?.id) {
-        const guestRaw =
-          localStorage.getItem(STORAGE_KEY_GUEST) ||
-          localStorage.getItem(STORAGE_KEY);
-        if (guestRaw) {
-          raw = guestRaw;
-          localStorage.setItem(activeStorageKey, guestRaw);
-          localStorage.removeItem(STORAGE_KEY_GUEST);
-          localStorage.removeItem(STORAGE_KEY);
-        }
-      }
-
-      if (raw) {
-        const d = JSON.parse(raw);
-        if (d && typeof d === "object" && d.form && (d.form.title || d.form.story || d.stage > 1)) {
-          if (!isCloudDraftDismissed(d.storyId || "", user?.id)) {
-            setResumeDraft(d);
-          } else {
-            setResumeDraft(null);
-          }
-        }
-      } else {
-        setResumeDraft(null);
-      }
-
-      // 4. If user is authenticated and Supabase is configured, check cloud draft
-      if (user?.id && isSupabaseConfigured()) {
-        getUserDraftFromBackend()
-          .then((cloudStory) => {
-            if (!active) return;
-            if (cloudStory) {
-              if (discardedDraftIdsRef.current.has(cloudStory.id || "")) {
-                setCloudDraft(null);
-                setCloudDraftUpdatedAt(null);
-                setCloudDraftStoryId(null);
-                return;
-              }
-              if (isCloudDraftDismissed(cloudStory.id || "", user.id)) {
-                setCloudDraft(null);
-                setCloudDraftUpdatedAt(null);
-                setCloudDraftStoryId(cloudStory.id || null);
-                return;
-              }
-              const cloudState = cloudDraftToPreserveState(cloudStory);
-              setCloudDraft(cloudState);
-              setCloudDraftStoryId(cloudStory.id || null);
-              setCloudDraftUpdatedAt(cloudStory.updated_at || null);
-            } else {
-              setCloudDraft(null);
-              setCloudDraftUpdatedAt(null);
-              setCloudDraftStoryId(null);
-            }
-          })
-          .catch(() => {});
-      } else {
-        setCloudDraft(null);
-        setCloudDraftUpdatedAt(null);
-        setCloudDraftStoryId(null);
+      localStorage.removeItem(activeStorageKey);
+      localStorage.removeItem(STORAGE_KEY_GUEST);
+      localStorage.removeItem(STORAGE_KEY);
+      if (user?.id) {
+        localStorage.removeItem(`virasya_story_draft_user_${user.id}`);
+        localStorage.removeItem(`virasya_cloud_draft_dismissed_${user.id}`);
       }
     } catch {
       // Ignore storage errors safely
     }
-
-    return () => {
-      active = false;
-    };
+    setResumeDraft(null);
+    setCloudDraft(null);
   }, [user?.id, activeStorageKey]);
 
   // Sync route on popstate (browser back/forward)
@@ -443,43 +255,6 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  // Save draft to localStorage debounced (scoped by user ID)
-  useEffect(() => {
-    if (resumeDraft || cloudDraft) return; // don't overwrite if waiting to resume
-    const hasSubstantiveContent = Boolean(
-      state.form.title?.trim() ||
-      state.form.story?.trim() ||
-      state.stage > 1 ||
-      state.audio ||
-      state.ed.text?.trim()
-    );
-    if (!hasSubstantiveContent) return;
-
-    const timer = setTimeout(() => {
-      try {
-        const safeAudio = state.audio
-          ? state.audio.kind === "demo"
-            ? state.audio
-            : {
-                kind: "lost",
-                name: state.audio.name,
-                size: state.audio.size,
-                duration: state.audio.duration,
-                url: null,
-              }
-          : null;
-        localStorage.setItem(
-          activeStorageKey,
-          JSON.stringify({ ...state, audio: safeAudio })
-        );
-        setSavedAt(getClock());
-      } catch {
-        // Ignore quota errors safely
-      }
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [state, resumeDraft, cloudDraft, activeStorageKey]);
-
 
 
   // Navigation action
@@ -490,7 +265,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         window.history.pushState(null, "", target.route);
       }
       setState((s) => {
-        const nextState = {
+        return {
           ...s,
           stage: stepNumber,
           completed: {
@@ -498,47 +273,6 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
             [s.stage]: true,
           },
         };
-
-        // Asynchronously persist draft to virasya-ai local repository
-        if (s.form.title || s.form.story) {
-          const storyId = s.storyId || `story_${Date.now()}`;
-          saveStoryToBackend({
-            id: storyId,
-            title: s.form.title,
-            carrier: s.form.carrier,
-            category: s.form.category,
-            roots: s.form.place,
-            language: s.form.language,
-            period: s.form.period,
-            relationship: s.form.relationship,
-            email: s.form.email,
-            writtenText: s.form.story,
-            audio: s.audio
-              ? {
-                  filename: s.audio.name,
-                  url: s.audio.url || undefined,
-                  size: s.audio.size,
-                  duration: s.audio.duration,
-                  kind: s.audio.kind,
-                  storage_path: s.audio.storage_path,
-                  bucket: s.audio.bucket,
-                }
-              : null,
-            workingDraft: s.punct.manual || s.ed.text || s.form.story,
-            vocabulary: s.vocab,
-            finalSettings: s.final,
-            visibility: s.final.visibility,
-            status: "draft",
-          })
-            .then((res) => {
-              if (res && res.story && res.story.id) {
-                setState((prev) => ({ ...prev, storyId: res.story.id }));
-              }
-            })
-            .catch(() => {});
-        }
-
-        return nextState;
       });
       window.scrollTo({ top: 0, behavior: "smooth" });
     }

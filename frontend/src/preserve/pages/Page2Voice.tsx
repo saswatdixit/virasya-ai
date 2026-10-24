@@ -769,6 +769,17 @@ export default function Page2Voice() {
               </div>
             ) : (
               <div>
+                {/* Panel Header for Section C preserved when Record / Audio capture interface opens */}
+                <div className="p-panel-header">
+                  <span className="p-panel-num">C</span>
+                  <div>
+                    <h2 className="p-panel-title">Written Memory & Notes</h2>
+                    <p className="p-panel-sub">
+                      Capture your thoughts in your own words. You can also record spoken audio on the next step.
+                    </p>
+                  </div>
+                </div>
+
                 {/* Method Switcher Tabs */}
                 <div className="p-tabs-segmented" role="tablist" aria-label="Audio capture method">
                   <button

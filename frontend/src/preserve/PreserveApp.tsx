@@ -3,7 +3,6 @@ import "./preserve.css";
 import { PreserveProvider, usePreserve } from "./context/PreserveContext";
 import Header from "../components/layout/Header";
 import StepProgress from "./components/StepProgress";
-import DraftBanner from "./components/DraftBanner";
 import BackendStatusBanner from "./components/BackendStatusBanner";
 import Page1Story from "./pages/Page1Story";
 import Page2Voice from "./pages/Page2Voice";
@@ -46,8 +45,6 @@ function PreserveContent() {
 
       {/* Persistent 6-Step Progress Rail directly below header */}
       {!state.final.isPreserved && <StepProgress />}
-
-      <DraftBanner />
 
       <main className="preserve-main-wrap" id="main-content">
         {state.stage === 1 && <Page1Story />}

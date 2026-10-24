@@ -208,52 +208,32 @@ const draftBannerCode = fs.readFileSync(
 );
 
 check(
-  'api.ts defines getUserDraftFromBackend querying Supabase draft stories',
-  apiCode.includes('export async function getUserDraftFromBackend()') &&
-    apiCode.includes('.eq("status", "draft")'),
-  'api.ts must export getUserDraftFromBackend'
+  'PreserveContext purges all legacy draft keys from localStorage to prevent draft resurrection',
+  preserveContextCode.includes('localStorage.removeItem(activeStorageKey)') &&
+    preserveContextCode.includes('localStorage.removeItem(STORAGE_KEY_GUEST)') &&
+    preserveContextCode.includes('localStorage.removeItem(STORAGE_KEY)'),
+  'PreserveContext must actively purge legacy draft keys on mount'
 );
 
 check(
-  'PreserveContext checks for both local and cloud drafts without silent overwrite',
-  preserveContextCode.includes('getUserDraftFromBackend()') &&
-    preserveContextCode.includes('setCloudDraft') &&
-    preserveContextCode.includes('setResumeDraft'),
-  'PreserveContext must retain both local and cloud draft states'
+  'DraftBanner is disabled and returns null, eliminating all draft banners and 6/6 indicators',
+  draftBannerCode.includes('return null;'),
+  'DraftBanner must return null to eliminate all draft recovery banners'
 );
 
 check(
-  'PreserveContext provides flexible resumeFromSaved and dismissResume',
-  preserveContextCode.includes('resumeFromSaved = useCallback((source?: "local" | "cloud")') &&
-    preserveContextCode.includes('dismissResume = useCallback((source?: "all" | "local" | "cloud")'),
-  'PreserveContext must support targeted or universal draft resumption/dismissal'
-);
-
-check(
-  'DraftBanner renders choice conflict grid when both local and cloud drafts exist',
-  draftBannerCode.includes('p-draft-conflict-grid') &&
-    draftBannerCode.includes('Local Browser Draft') &&
-    draftBannerCode.includes('Sovereign Cloud Draft') &&
-    draftBannerCode.includes('Resume Local Draft') &&
-    draftBannerCode.includes('Resume Cloud Draft'),
-  'DraftBanner must render conflict selection when both drafts are present'
-);
-
-check(
-  'DraftBanner includes archival audio persistence notice regarding cross-device recovery',
-  draftBannerCode.includes('Audio persistence notice:') &&
-    draftBannerCode.includes('Un-uploaded audio recordings created on another device cannot be restored automatically'),
-  'DraftBanner must clearly explain un-uploaded audio limitations across devices'
+  'PreserveApp does not mount DraftBanner in the preservation layout',
+  !fs.readFileSync(path.join(__dirname, '../src/preserve/PreserveApp.tsx'), 'utf8').includes('<DraftBanner />'),
+  'PreserveApp must not render DraftBanner'
 );
 
 // ---------------------------------------------------------------------------
 // 4. Post-Audit Regression Fixes
 // ---------------------------------------------------------------------------
 check(
-  '[Fix 1] PreserveContext debounced auto-save effect guards both resumeDraft and cloudDraft',
-  preserveContextCode.includes('if (resumeDraft || cloudDraft) return;') &&
-    preserveContextCode.includes('[state, resumeDraft, cloudDraft, activeStorageKey]'),
-  'Must guard auto-save against overwriting while either local or cloud draft is pending'
+  '[Fix 1] PreserveContext eliminates draft autosave to prevent resurrecting completed uploads',
+  !preserveContextCode.includes('localStorage.setItem(activeStorageKey'),
+  'Must not persist debounced drafts to localStorage'
 );
 
 check(

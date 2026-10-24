@@ -165,7 +165,7 @@ export async function preserveStoryToSupabase(
 
 // Explicit public-safe column projections (omits personal email and private storage paths)
 const EXPLORE_PUBLIC_COLUMNS =
-  "id, title, carrier, relationship, place, roots, category, language, period, written_text, final_text, story, status, visibility, audio_public_playback, provenance_id, provenance_hash, preserved_at, created_at, updated_at, audio, vocabulary";
+  "id, title, carrier, place, roots, category, language, period, final_text, audio_public_playback, provenance_id, preserved_at, created_at, audio, vocabulary";
 
 const EXPLORE_DETAIL_COLUMNS = EXPLORE_PUBLIC_COLUMNS;
 
@@ -220,14 +220,13 @@ export async function fetchExploreStoriesFromSupabase(filters?: {
           (r.title && r.title.toLowerCase().includes(searchTerm)) ||
           (r.carrier && r.carrier.toLowerCase().includes(searchTerm)) ||
           (r.place && r.place.toLowerCase().includes(searchTerm)) ||
-          (r.final_text && r.final_text.toLowerCase().includes(searchTerm)) ||
-          (r.written_text && r.written_text.toLowerCase().includes(searchTerm))
+          (r.final_text && r.final_text.toLowerCase().includes(searchTerm))
         );
       });
     }
 
     const cards: ExploreStoryCard[] = rows.map((row: any) => {
-      const excerpt = (row.final_text || row.written_text || row.story || "").slice(0, 150);
+      const excerpt = (row.final_text || "").slice(0, 150);
       const settingsProvId = (row.final_settings as any)?.provenance_id;
       return {
         id: row.id,
@@ -238,9 +237,9 @@ export async function fetchExploreStoriesFromSupabase(filters?: {
         roots: row.roots,
         language: row.language || "Hindi",
         period: row.period || "Traditional",
-        relationship: row.relationship || "",
+        relationship: (row.relationship || "").trim(),
         excerpt: excerpt ? (excerpt.length >= 150 ? `${excerpt}…` : excerpt) : "Oral heritage record",
-        word_count: (row.final_text || row.written_text || "").split(/\s+/).filter(Boolean).length,
+        word_count: (row.final_text || "").split(/\s+/).filter(Boolean).length,
         preserved_at: row.preserved_at || row.created_at,
         provenance_id: row.provenance_id || settingsProvId || `VIR-${row.id.slice(-6).toUpperCase()}`,
         vocabulary_count: Array.isArray(row.vocabulary) ? row.vocabulary.length : 0,
@@ -283,7 +282,7 @@ export async function fetchExploreStoryDetailFromSupabase(
     }
 
     const payload = storyRowToStoryPayload(data as any);
-    const excerpt = (data.final_text || data.written_text || data.story || "").slice(0, 150);
+    const excerpt = (data.final_text || "").slice(0, 150);
     const settingsProvId = (data as any)?.final_settings?.provenance_id;
 
     // Sanitize audio metadata: do NOT leak private storage path if public playback is disabled
@@ -300,15 +299,15 @@ export async function fetchExploreStoryDetailFromSupabase(
       roots: data.roots,
       language: data.language || "Odia",
       period: data.period || "Traditional",
-      relationship: data.relationship || "",
+      relationship: (data.relationship || "").trim(),
       excerpt: excerpt ? `${excerpt}…` : "Oral heritage record",
-      word_count: (data.final_text || data.written_text || "").split(/\s+/).filter(Boolean).length,
+      word_count: (data.final_text || "").split(/\s+/).filter(Boolean).length,
       preserved_at: data.preserved_at || data.created_at,
       provenance_id: data.provenance_id || settingsProvId || `VIR-${data.id.slice(-6).toUpperCase()}`,
       vocabulary_count: Array.isArray(data.vocabulary) ? data.vocabulary.length : 0,
       has_audio: Boolean(data.audio && data.audio_public_playback),
       vocabulary: Array.isArray(data.vocabulary) ? (data.vocabulary as any) : [],
-      final_text: data.final_text || data.written_text || data.story || "",
+      final_text: data.final_text || "",
       audio: safeAudio,
       raw_transcripts: undefined,
     };
