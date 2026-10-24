@@ -392,6 +392,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const signOut = useCallback(async (): Promise<{ error: AuthError | Error | null }> => {
+    // Purge user-scoped and guest draft keys to prevent cross-session leakage (VIR-SEC-006)
+    try {
+      if (user?.id) {
+        localStorage.removeItem(`virasya_story_draft_user_${user.id}`);
+      }
+      localStorage.removeItem("virasya_story_draft_guest");
+      localStorage.removeItem("virasya_preserve_story_draft_v2");
+    } catch {}
+    setProfile(null);
+
     const supabase = getSupabase();
     if (!supabase || !isConfigured) {
       setUser(null);
@@ -409,7 +419,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(null);
       return { error: err instanceof Error ? err : new Error(String(err)) };
     }
-  }, [isConfigured]);
+  }, [user?.id, isConfigured]);
 
   return createElement(
     AuthContext.Provider,

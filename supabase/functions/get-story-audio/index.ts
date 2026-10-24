@@ -17,13 +17,25 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
 const ALLOWED_STORAGE_BUCKET = "story-recordings-private";
+
+const ALLOWED_ORIGINS = [
+  "https://virasya-ai-gnani.vercel.app",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:3000",
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get("Origin") || "";
+  const allowOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+}
 
 interface AudioPlaybackRequest {
   story_id?: string;
@@ -31,6 +43,8 @@ interface AudioPlaybackRequest {
 }
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = getCorsHeaders(req);
+
   // 1. Handle CORS Preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -102,12 +116,20 @@ Deno.serve(async (req: Request) => {
     }
 
     // 4. Access Authorization Check
-    const isPublicPreserved = story.status === "preserved" && story.visibility === "public";
+    // A story recording is eligible for public unauthenticated playback ONLY if:
+    // 1. status is 'preserved'
+    // 2. visibility is 'public'
+    // 3. audio_public_playback is explicitly true (VIR-SEC-002)
+    const isPublicPreserved =
+      story.status === "preserved" && story.visibility === "public";
+    const isPublicAudio =
+      isPublicPreserved && Boolean(story.audio_public_playback);
 
-    if (!isPublicPreserved) {
-      // For non-public or unpreserved recordings, caller must be the authenticated owner
+    if (!isPublicAudio) {
+      // For non-public recordings or when public audio consent is false,
+      // caller must be the authenticated author of the story
       const authHeader = req.headers.get("Authorization");
-      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
         return new Response(
           JSON.stringify({
             error: "Authentication required to play private audio recordings.",

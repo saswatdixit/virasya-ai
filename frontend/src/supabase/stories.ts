@@ -157,6 +157,13 @@ export async function preserveStoryToSupabase(
   };
 }
 
+// Explicit public-safe column projections (omits personal email and private storage paths)
+const EXPLORE_PUBLIC_COLUMNS =
+  "id, title, carrier, relationship, place, roots, category, language, period, written_text, final_text, story, status, visibility, audio_public_playback, provenance_id, provenance_hash, preserved_at, created_at, updated_at, audio, vocabulary";
+
+const EXPLORE_DETAIL_COLUMNS =
+  "id, title, carrier, relationship, place, roots, category, language, period, written_text, final_text, story, status, visibility, audio_public_playback, provenance_id, provenance_hash, preserved_at, created_at, updated_at, audio, vocabulary, raw_transcripts";
+
 /**
  * Queries Supabase public.stories for preserved public stories.
  */
@@ -175,7 +182,7 @@ export async function fetchExploreStoriesFromSupabase(filters?: {
   try {
     let query = supabase
       .from("stories")
-      .select("*")
+      .select(EXPLORE_PUBLIC_COLUMNS)
       .eq("status", "preserved")
       .eq("visibility", "public")
       .order("preserved_at", { ascending: false, nullsFirst: false });
@@ -214,7 +221,7 @@ export async function fetchExploreStoriesFromSupabase(filters?: {
       });
     }
 
-    const cards: ExploreStoryCard[] = rows.map((row) => {
+    const cards: ExploreStoryCard[] = rows.map((row: any) => {
       const excerpt = (row.final_text || row.written_text || row.story || "").slice(0, 150);
       const settingsProvId = (row.final_settings as any)?.provenance_id;
       return {
@@ -261,17 +268,24 @@ export async function fetchExploreStoryDetailFromSupabase(
   try {
     const { data, error } = await supabase
       .from("stories")
-      .select("*")
+      .select(EXPLORE_DETAIL_COLUMNS)
       .eq("id", storyId)
+      .eq("status", "preserved")
+      .eq("visibility", "public")
       .single();
 
     if (error || !data) {
       return null;
     }
 
-    const payload = storyRowToStoryPayload(data);
+    const payload = storyRowToStoryPayload(data as any);
     const excerpt = (data.final_text || data.written_text || data.story || "").slice(0, 150);
-    const settingsProvId = (data.final_settings as any)?.provenance_id;
+    const settingsProvId = (data as any)?.final_settings?.provenance_id;
+
+    // Sanitize audio metadata: do NOT leak private storage path if public playback is disabled
+    const safeAudio = data.audio_public_playback
+      ? payload.audio
+      : undefined;
 
     return {
       id: data.id,
@@ -288,10 +302,10 @@ export async function fetchExploreStoryDetailFromSupabase(
       preserved_at: data.preserved_at || data.created_at,
       provenance_id: data.provenance_id || settingsProvId || `VIR-${data.id.slice(-6).toUpperCase()}`,
       vocabulary_count: Array.isArray(data.vocabulary) ? data.vocabulary.length : 0,
-      has_audio: Boolean(data.audio),
+      has_audio: Boolean(data.audio && data.audio_public_playback),
       vocabulary: Array.isArray(data.vocabulary) ? (data.vocabulary as any) : [],
       final_text: data.final_text || data.written_text || data.story || "",
-      audio: payload.audio,
+      audio: safeAudio,
       raw_transcripts: data.raw_transcripts as any,
     };
   } catch {

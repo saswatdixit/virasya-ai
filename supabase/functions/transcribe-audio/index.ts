@@ -23,15 +23,27 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { validateAudioBuffer } from "../preserve-story/audio-validator.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
 const STORAGE_BUCKET = "story-recordings-private";
 const GNANI_STT_ENDPOINT = "https://api.vachana.ai/stt/v3";
 const GNANI_TIMEOUT_MS = 45000; // 45 seconds timeout
+
+const ALLOWED_ORIGINS = [
+  "https://virasya-ai-gnani.vercel.app",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:3000",
+];
+
+function getCorsHeaders(req: Request) {
+  const origin = req.headers.get("Origin") || "";
+  const allowOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+}
 
 interface TranscribeRequestBody {
   storage_path?: string;
@@ -79,6 +91,8 @@ function normalizeLanguageCode(raw?: string): string {
 }
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = getCorsHeaders(req);
+
   // 1. Handle CORS Preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -214,7 +228,47 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 7. Verify GNANI_API_KEY secret
+    // 7. Atomic Rate Limiting & Quota Consumption (VIR-SEC-004)
+    // Enforces maximum 10 transcription requests per 10 minutes per authenticated user.
+    // Serialized with PostgreSQL transactional advisory lock to prevent race conditions.
+    const maxRequests = 10;
+    const windowSeconds = 600;
+    try {
+      const { data: quotaResult, error: quotaError } = await adminClient.rpc(
+        "check_and_consume_transcription_quota",
+        {
+          p_user_id: user.id,
+          p_max_requests: maxRequests,
+          p_window_seconds: windowSeconds,
+        }
+      );
+
+      if (quotaError) {
+        console.warn("[Quota] Rate limit check notice:", quotaError.message);
+      } else if (quotaResult && quotaResult.allowed === false) {
+        return new Response(
+          JSON.stringify({
+            error: `Transcription rate limit exceeded. You have reached the limit of ${maxRequests} requests per ${windowSeconds / 60} minutes. Please try again later.`,
+            code: "RATE_LIMIT_EXCEEDED",
+            current_count: quotaResult.current_count,
+            max_limit: quotaResult.max_limit,
+            retry_after: windowSeconds,
+          }),
+          {
+            status: 429,
+            headers: {
+              ...corsHeaders,
+              "Content-Type": "application/json",
+              "Retry-After": String(windowSeconds),
+            },
+          }
+        );
+      }
+    } catch (quotaErr) {
+      console.warn("[Quota] Rate limit RPC exception:", quotaErr);
+    }
+
+    // 8. Verify GNANI_API_KEY secret
     const gnaniApiKey = Deno.env.get("GNANI_API_KEY");
     if (!gnaniApiKey) {
       return new Response(

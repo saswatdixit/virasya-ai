@@ -24,6 +24,8 @@ import {
   DEMO_TRANSCRIPTS,
   STEP_DEFINITIONS,
   STORAGE_KEY,
+  STORAGE_KEY_GUEST,
+  getDraftStorageKey,
 } from "../types";
 
 import {
@@ -203,20 +205,51 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     simRef.current = sim;
   }, [sim]);
 
-  // Check localStorage for previous draft on mount
+  const activeStorageKey = getDraftStorageKey(user?.id);
+  const prevUserIdRef = useRef<string | null | undefined>(user?.id);
+
+  // Check localStorage for previous draft on mount or user identity change (VIR-SEC-006)
   useEffect(() => {
+    const prevId = prevUserIdRef.current;
+    prevUserIdRef.current = user?.id;
+
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      // 1. Check user-scoped draft
+      let raw = localStorage.getItem(activeStorageKey);
+
+      // 2. If guest just signed in, migrate guest draft into their user-scoped storage key
+      if (!raw && user?.id) {
+        const guestRaw =
+          localStorage.getItem(STORAGE_KEY_GUEST) ||
+          localStorage.getItem(STORAGE_KEY);
+        if (guestRaw) {
+          raw = guestRaw;
+          localStorage.setItem(activeStorageKey, guestRaw);
+          localStorage.removeItem(STORAGE_KEY_GUEST);
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      }
+
+      // 3. If switching from one authenticated user to a different user, or logout:
+      if (prevId !== undefined && prevId !== user?.id) {
+        if (!user?.id) {
+          // Logged out: reset in-memory state so previous user's draft is not shown on screen
+          setState({ ...INITIAL_STATE });
+          setResumeDraft(null);
+          return;
+        }
+      }
+
       if (raw) {
         const d = JSON.parse(raw);
-        if (d && d.form && (d.form.title || d.form.story || d.stage > 1)) {
+        if (d && typeof d === "object" && d.form && (d.form.title || d.form.story || d.stage > 1)) {
           setResumeDraft(d);
         }
       }
     } catch {
-      // Ignore storage errors
+      // Ignore storage errors safely
     }
-  }, []);
+  }, [user?.id, activeStorageKey]);
 
   // Sync route on popstate (browser back/forward)
   useEffect(() => {
@@ -231,7 +264,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  // Save draft to localStorage debounced
+  // Save draft to localStorage debounced (scoped by user ID)
   useEffect(() => {
     if (resumeDraft) return; // don't overwrite if waiting to resume
     const timer = setTimeout(() => {
@@ -248,16 +281,16 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
               }
           : null;
         localStorage.setItem(
-          STORAGE_KEY,
+          activeStorageKey,
           JSON.stringify({ ...state, audio: safeAudio })
         );
         setSavedAt(getClock());
       } catch {
-        // Ignore quota errors
+        // Ignore quota errors safely
       }
     }, 600);
     return () => clearTimeout(timer);
-  }, [state, resumeDraft]);
+  }, [state, resumeDraft, activeStorageKey]);
 
 
 
@@ -1043,6 +1076,13 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         final: { ...s.final, isPreserved: true, isPreviewPreserved: false },
       }));
 
+      // Clear all draft storage keys on preservation success
+      try {
+        localStorage.removeItem(activeStorageKey);
+        localStorage.removeItem(STORAGE_KEY_GUEST);
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {}
+
       return res;
     }
 
@@ -1055,6 +1095,11 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         storyId: res.story.id,
         final: { ...s.final, isPreserved: true, isPreviewPreserved: false },
       }));
+      try {
+        localStorage.removeItem(activeStorageKey);
+        localStorage.removeItem(STORAGE_KEY_GUEST);
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {}
       return res;
     }
 
@@ -1062,17 +1107,19 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     throw new Error(
       "Archival database connection is not available in this environment. Permanent persistence requires an active Supabase connection."
     );
-  }, [state, user, profile, openAuthModal]);
+  }, [state, user, profile, openAuthModal, activeStorageKey]);
 
   const resetAll = useCallback(() => {
     try {
+      localStorage.removeItem(activeStorageKey);
+      localStorage.removeItem(STORAGE_KEY_GUEST);
       localStorage.removeItem(STORAGE_KEY);
     } catch {}
     setState({ ...INITIAL_STATE });
     setResumeDraft(null);
     setLeaveModalOpen(false);
     goToStep(1);
-  }, [goToStep]);
+  }, [goToStep, activeStorageKey]);
 
   const resumeFromSaved = useCallback(() => {
     if (resumeDraft) {
@@ -1090,10 +1137,12 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
 
   const dismissResume = useCallback(() => {
     try {
+      localStorage.removeItem(activeStorageKey);
+      localStorage.removeItem(STORAGE_KEY_GUEST);
       localStorage.removeItem(STORAGE_KEY);
     } catch {}
     setResumeDraft(null);
-  }, []);
+  }, [activeStorageKey]);
 
   const isTranscribing =
     transcriptionPhase === "checking" ||

@@ -323,3 +323,8 @@ export const STEP_DEFINITIONS = [
 ];
 
 export const STORAGE_KEY = "virasya_preserve_story_draft_v2";
+export const STORAGE_KEY_GUEST = "virasya_story_draft_guest";
+
+export function getDraftStorageKey(userId?: string | null): string {
+  return userId ? `virasya_story_draft_user_${userId}` : STORAGE_KEY_GUEST;
+}
