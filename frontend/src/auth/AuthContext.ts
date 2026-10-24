@@ -34,6 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isConfigured = isSupabaseConfigured();
   const [loading, setLoading] = useState<boolean>(() => isConfigured);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [callbackError, setCallbackError] = useState<string | null>(null);
 
   const openAuthModal = useCallback(() => {
     setAuthModalOpen(true);
@@ -41,6 +42,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const closeAuthModal = useCallback(() => {
     setAuthModalOpen(false);
+  }, []);
+
+  const clearCallbackError = useCallback(() => {
+    setCallbackError(null);
   }, []);
 
   const fetchProfile = useCallback(
@@ -206,6 +211,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let isMounted = true;
 
+    // 0. Handle incoming URL parameters (magic link errors, PKCE code exchange)
+    if (typeof window !== "undefined") {
+      try {
+        const searchParams = new URLSearchParams(window.location.search);
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, "?"));
+        const errorDesc =
+          searchParams.get("error_description") ||
+          hashParams.get("error_description") ||
+          searchParams.get("error") ||
+          hashParams.get("error");
+
+        if (errorDesc) {
+          const isExpired = /expired|invalid|token|otp/i.test(errorDesc);
+          const friendlyMessage = isExpired
+            ? "Your sign-in link is invalid or has expired. Please request a new link below."
+            : decodeURIComponent(errorDesc.replace(/\+/g, " "));
+          setCallbackError(friendlyMessage);
+          setAuthModalOpen(true);
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        const code = searchParams.get("code");
+        if (code) {
+          supabase.auth
+            .exchangeCodeForSession(code)
+            .then(({ data, error: exchangeError }) => {
+              if (exchangeError) {
+                setCallbackError("Failed to verify sign-in link. Please request a new one.");
+                setAuthModalOpen(true);
+              } else if (data.session) {
+                setSession(data.session);
+                setUser(data.session.user);
+                setAuthModalOpen(false);
+                setCallbackError(null);
+              }
+              window.history.replaceState({}, document.title, window.location.pathname);
+            })
+            .catch(() => {});
+        }
+      } catch {
+        // Safe fallback if window parsing fails
+      }
+    }
+
     // 1. Initial session restoration
     supabase.auth
       .getSession()
@@ -222,6 +271,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(u);
           if (u) {
             fetchProfile(u);
+            setAuthModalOpen(false);
+            setCallbackError(null);
           } else {
             setProfile(null);
           }
@@ -244,6 +295,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u);
       if (u) {
         fetchProfile(u);
+        setAuthModalOpen(false);
+        setCallbackError(null);
       } else {
         setProfile(null);
       }
@@ -278,10 +331,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const redirectTo =
-          typeof window !== "undefined" && window.location && window.location.origin
-            ? `${window.location.origin}/`
-            : undefined;
+        let origin = "https://virasya-ai-gnani.vercel.app";
+        if (typeof window !== "undefined" && window.location && window.location.origin) {
+          origin = window.location.origin;
+        }
+        const siteUrl = (import.meta.env.VITE_SITE_URL || "").trim().replace(/\/+$/, "");
+        const targetOrigin = siteUrl || origin;
+        const redirectTo = `${targetOrigin}/`;
 
         const { error } = await supabase.auth.signInWithOtp({
           email,
@@ -365,8 +421,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         isConfigured,
         authModalOpen,
+        callbackError,
         openAuthModal,
         closeAuthModal,
+        clearCallbackError,
         signInWithOtp,
         verifyOtp,
         signOut,
@@ -385,6 +443,8 @@ export const defaultAuthContext: AuthContextType = {
   loading: false,
   isConfigured: false,
   authModalOpen: false,
+  callbackError: null,
+  clearCallbackError: () => {},
   openAuthModal: () => {},
   closeAuthModal: () => {},
   signInWithOtp: async () => ({ error: new Error("AuthProvider not mounted") }),

@@ -63,14 +63,18 @@ check(
 
 // 4. Check all authentication functionality preserved
 check(
-  'Email OTP form preserved with email input and submit button',
+  'Email magic link request form preserved with email input and submit button',
   authModal.includes('id="auth-email-input"') && authModal.includes('type="email"') && authModal.includes('handleSendOtp'),
-  'Email OTP input and flow must be preserved'
+  'Email magic link input and flow must be preserved'
 );
 check(
-  'OTP code verification form preserved with code input and verify handler',
-  authModal.includes('id="auth-token-input"') && authModal.includes('handleVerifyOtp') && authModal.includes('auth-code-input'),
-  'OTP token verification flow must be preserved'
+  'Magic link confirmation screen properly replaces OTP code input',
+  authModal.includes('Check your email') &&
+  authModal.includes('Use a different email') &&
+  authModal.includes('Resend sign-in link') &&
+  !authModal.includes('id="auth-token-input"') &&
+  !authModal.includes('auth-code-input'),
+  'OTP code input must be removed and replaced with clear email confirmation screen'
 );
 check(
   'Connected archivist profile management preserved with display name editing and sign out',

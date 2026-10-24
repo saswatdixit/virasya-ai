@@ -22,21 +22,21 @@ export default function AuthModal() {
     authModalOpen,
     closeAuthModal,
     signInWithOtp,
-    verifyOtp,
     signOut,
     updateProfile,
+    callbackError,
+    clearCallbackError,
   } = useAuth();
 
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const emailInputRef = useRef<HTMLInputElement | null>(null);
-  const tokenInputRef = useRef<HTMLInputElement | null>(null);
 
   const [email, setEmail] = useState("");
-  const [token, setToken] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
-  const [step, setStep] = useState<"email" | "verify">("email");
+  const [step, setStep] = useState<"email" | "sent">("email");
   const [submitting, setSubmitting] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
 
@@ -49,6 +49,22 @@ export default function AuthModal() {
     }
   }, [profile, user]);
 
+  // Sync callback errors from magic link redirection
+  useEffect(() => {
+    if (callbackError) {
+      setErrorMsg(callbackError);
+    }
+  }, [callbackError]);
+
+  // Countdown timer for magic link resend cooldown
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
+
   // Synchronize native HTML <dialog> lifecycle with authModalOpen
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -58,16 +74,13 @@ export default function AuthModal() {
       if (!dialog.open) {
         dialog.showModal();
       }
-      setErrorMsg(null);
+      if (!callbackError) {
+        setErrorMsg(null);
+      }
       setInfoMsg(null);
-      // Focus appropriate input depending on state
       setTimeout(() => {
-        if (!user) {
-          if (step === "verify") {
-            tokenInputRef.current?.focus();
-          } else {
-            emailInputRef.current?.focus();
-          }
+        if (!user && step === "email") {
+          emailInputRef.current?.focus();
         }
       }, 50);
     } else {
@@ -75,7 +88,7 @@ export default function AuthModal() {
         dialog.close();
       }
     }
-  }, [authModalOpen, user, step]);
+  }, [authModalOpen, user, step, callbackError]);
 
   // Handle native backdrop clicks
   const handleDialogClick = useCallback(
@@ -95,11 +108,12 @@ export default function AuthModal() {
     [closeAuthModal]
   );
 
-  // Send Magic Link / OTP Code
+  // Send Magic Link
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setInfoMsg(null);
+    if (clearCallbackError) clearCallbackError();
 
     const trimmed = email.trim();
     if (!trimmed) {
@@ -114,39 +128,45 @@ export default function AuthModal() {
     if (error) {
       setErrorMsg(error.message);
     } else {
-      setStep("verify");
-      setInfoMsg(
-        `A 6-digit confirmation code and sign-in link were sent to ${trimmed}. Check your inbox (or spam) to continue.`
-      );
+      setStep("sent");
+      setResendCooldown(60);
+      setInfoMsg(null);
     }
   };
 
-  // Verify OTP code
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Resend Magic Link with cooldown
+  const handleResendLink = async () => {
+    if (submitting || resendCooldown > 0) return;
     setErrorMsg(null);
     setInfoMsg(null);
 
-    const trimmedToken = token.trim();
-    if (!trimmedToken) {
-      setErrorMsg("Please enter the 6-digit verification code from your email.");
+    const trimmed = email.trim();
+    if (!trimmed) {
+      setStep("email");
       return;
     }
 
     setSubmitting(true);
-    const { error } = await verifyOtp(email.trim(), trimmedToken);
+    const { error } = await signInWithOtp(trimmed);
     setSubmitting(false);
 
     if (error) {
       setErrorMsg(error.message);
     } else {
-      setInfoMsg("Authentication successful! Loading your archive...");
-      setTimeout(() => {
-        closeAuthModal();
-        setStep("email");
-        setToken("");
-      }, 800);
+      setResendCooldown(60);
+      setInfoMsg("A fresh sign-in link has been sent to your email.");
     }
+  };
+
+  // Switch back to email step
+  const handleUseDifferentEmail = () => {
+    setStep("email");
+    setErrorMsg(null);
+    setInfoMsg(null);
+    if (clearCallbackError) clearCallbackError();
+    setTimeout(() => {
+      emailInputRef.current?.focus();
+    }, 50);
   };
 
   // Save profile display name
@@ -173,6 +193,7 @@ export default function AuthModal() {
   const handleSignOut = async () => {
     setErrorMsg(null);
     setInfoMsg(null);
+    if (clearCallbackError) clearCallbackError();
     setSubmitting(true);
     const { error } = await signOut();
     setSubmitting(false);
@@ -182,7 +203,6 @@ export default function AuthModal() {
     } else {
       setStep("email");
       setEmail("");
-      setToken("");
       setInfoMsg("You have signed out. Virasya is running in guest mode.");
     }
   };
@@ -296,15 +316,22 @@ export default function AuthModal() {
             on your local device.
           </p>
         </div>
-      ) : step === "verify" ? (
-        /* 2. VERIFY OTP STEP */
-        <div className="auth-step-verify">
+      ) : step === "sent" ? (
+        /* 2. EMAIL SENT CONFIRMATION STEP */
+        <div className="auth-step-sent">
           <p className="eyebrow">CONFIRM ACCESS</p>
-          <h2 id="auth-modal-title">Check your inbox</h2>
+          <h2 id="auth-modal-title">Check your email</h2>
           <p id="auth-modal-desc">
-            Enter the 6-digit confirmation code sent to <strong>{email}</strong>, or click
-            the magic link in the email.
+            We’ve sent you a sign-in link. Open the email and click the link to securely sign in to Virasya.
           </p>
+
+          <div className="auth-email-sent-card">
+            <div className="auth-email-icon" aria-hidden="true">✉</div>
+            <div className="auth-sent-info">
+              <span className="auth-sent-label">Sign-in link sent to</span>
+              <span className="auth-sent-address">{email}</span>
+            </div>
+          </div>
 
           {infoMsg && (
             <div className="auth-notice info" role="status">
@@ -317,54 +344,29 @@ export default function AuthModal() {
             </div>
           )}
 
-          <form className="auth-form" onSubmit={handleVerifyOtp}>
-            <label htmlFor="auth-token-input">6-DIGIT VERIFICATION CODE</label>
-            <input
-              ref={tokenInputRef}
-              id="auth-token-input"
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={6}
-              placeholder="123456"
-              autoComplete="one-time-code"
-              required
-              value={token}
-              onChange={(e) => setToken(e.target.value.replace(/\D/g, ""))}
-              className="auth-code-input"
-              disabled={submitting}
-            />
-
+          <div className="auth-sent-actions">
             <button
-              type="submit"
+              type="button"
               className="btn ink"
-              disabled={submitting || token.trim().length === 0}
+              onClick={handleResendLink}
+              disabled={submitting || resendCooldown > 0}
             >
-              {submitting ? "Verifying..." : "Verify & Sign In"}{" "}
+              {resendCooldown > 0
+                ? `Resend link in ${resendCooldown}s`
+                : submitting
+                ? "Sending link…"
+                : "Resend sign-in link"}{" "}
               <span className="arrow">↗</span>
             </button>
-          </form>
+          </div>
 
           <div className="auth-alt-row">
             <button
               type="button"
               className="auth-text-link"
-              onClick={() => {
-                setStep("email");
-                setErrorMsg(null);
-                setInfoMsg(null);
-              }}
+              onClick={handleUseDifferentEmail}
             >
               ← Use a different email
-            </button>
-
-            <button
-              type="button"
-              className="auth-text-link"
-              onClick={handleSendOtp}
-              disabled={submitting}
-            >
-              Resend code
             </button>
           </div>
 
@@ -387,7 +389,7 @@ export default function AuthModal() {
           <p className="eyebrow">VIRASYA CLOUD ARCHIVE</p>
           <h2 id="auth-modal-title">Sign in to Virasya</h2>
           <p id="auth-modal-desc">
-            Enter your email to receive a secure one-time passcode or magic link.
+            Enter your email to receive a secure sign-in magic link.
             Or continue exploring freely as a guest.
           </p>
 
@@ -429,7 +431,7 @@ export default function AuthModal() {
               className="btn ink"
               disabled={submitting || authLoading}
             >
-              {submitting ? "Sending code..." : "Send Magic Link / Passcode"}{" "}
+              {submitting ? "Sending link…" : "Send Magic Link"}{" "}
               <span className="arrow">↗</span>
             </button>
           </form>

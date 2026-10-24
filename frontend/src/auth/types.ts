@@ -28,6 +28,8 @@ export interface AuthContextType {
   loading: boolean;
   isConfigured: boolean;
   authModalOpen: boolean;
+  callbackError?: string | null;
+  clearCallbackError?: () => void;
   openAuthModal: () => void;
   closeAuthModal: () => void;
   signInWithOtp: (email: string) => Promise<{ error: AuthError | Error | null }>;
