@@ -41,29 +41,37 @@ function check(label, condition, details) {
   }
 }
 
-// 1. Explore, Culture Hosts, and Private Vault navigation targets
+// 1. Explore, Culture Hosts, and Private Vault navigation targets & explicit handlers
 check(
   'Closing.tsx contains redirect link to /explore',
-  closing.includes('href="/explore">Explore</a>'),
+  closing.includes('href="/explore"') && closing.includes('Explore'),
   'Explore link must point to /explore'
 );
 
 check(
   'Closing.tsx contains redirect link to /culture-hosts',
-  closing.includes('href="/culture-hosts">Culture Hosts</a>'),
+  closing.includes('href="/culture-hosts"') && closing.includes('Culture Hosts'),
   'Culture Hosts link must point to /culture-hosts'
 );
 
 check(
   'Closing.tsx contains redirect link to /private-vault',
-  closing.includes('href="/private-vault">Private Vault</a>'),
+  closing.includes('href="/private-vault"') && closing.includes('Private Vault'),
   'Private Vault link must point to /private-vault'
 );
 
 check(
   'Closing.tsx contains redirect link to #faq',
-  closing.includes('href="#faq">Good questions</a>'),
+  closing.includes('href="#faq"') && closing.includes('Good questions'),
   'Good questions link must point to #faq'
+);
+
+check(
+  'Closing.tsx provides explicit navigateTo handler for SPA redirects',
+  closing.includes('navigateTo(e, "/explore")') &&
+  closing.includes('navigateTo(e, "/culture-hosts")') &&
+  closing.includes('navigateTo(e, "/private-vault")'),
+  'Closing.tsx must invoke navigateTo on click for instant SPA transition'
 );
 
 // 2. Removal of "Soon" badges
@@ -96,6 +104,27 @@ check(
   'Closing.tsx retains BACK TO TOP link',
   closing.includes('BACK TO TOP ↑'),
   'BACK TO TOP link must remain in footer baseline'
+);
+
+// 4. Stacking context & hover underline in globals.css
+const cssPath = path.join(__dirname, '../src/styles/globals.css');
+const css = fs.readFileSync(cssPath, 'utf8');
+
+check(
+  'globals.css elevates footer-top z-index above footer-brand to prevent click interception',
+  css.includes('.footer-top {') &&
+  css.includes('z-index: 50') &&
+  css.includes('.footer-brand {') &&
+  css.includes('z-index: 1'),
+  'footer-top must have higher stacking context than footer-brand'
+);
+
+check(
+  'globals.css enforces underline on hover for all footer links with pointer-events: auto',
+  css.includes('text-decoration: underline') &&
+  css.includes('text-underline-offset: 5px') &&
+  css.includes('pointer-events: auto'),
+  'Hover underline must apply across all footer navigation links'
 );
 
 // 4. App.tsx SPA Link Click Navigation Handler
