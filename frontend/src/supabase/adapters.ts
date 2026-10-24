@@ -188,6 +188,8 @@ export function storyRowToStoryPayload(row: StoryRow): StoryPayload {
         size: row.audio.size ?? null,
         duration: row.audio.duration ?? null,
         kind: row.audio.kind || "uploaded",
+        storage_path: row.audio.storage_path || undefined,
+        bucket: row.audio.bucket || undefined,
       }
     : null;
 
@@ -207,6 +209,7 @@ export function storyRowToStoryPayload(row: StoryRow): StoryPayload {
     vocabulary: Array.isArray(row.vocabulary) ? (row.vocabulary as any) : [],
     punctuation: typeof row.punctuation === "object" && row.punctuation !== null ? (row.punctuation as any) : {},
     finalSettings,
+    visibility: row.visibility,
     status: row.status,
     updated_at: row.updated_at,
     created_at: row.created_at,

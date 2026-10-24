@@ -294,21 +294,31 @@ export default function AuthModal() {
             </div>
           )}
 
-          <button
-            type="button"
-            className="btn ink"
-            onClick={handleSignOut}
-            disabled={submitting || authLoading}
-          >
-            {submitting ? "Signing out..." : "Sign Out"} <span className="arrow">↗</span>
-          </button>
+          <div style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
+            <a
+              href="/my-archive"
+              className="btn ink"
+              style={{ flex: 1, textDecoration: "none", textAlign: "center" }}
+              onClick={closeAuthModal}
+            >
+              Open My Archive & Vault <span className="arrow">↗</span>
+            </a>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={handleSignOut}
+              disabled={submitting || authLoading}
+            >
+              {submitting ? "Signing out..." : "Sign Out"}
+            </button>
+          </div>
 
           <button
             type="button"
             className="auth-guest-btn"
             onClick={closeAuthModal}
           >
-            Return to Archive
+            Close Profile Window
           </button>
 
           <p className="fine">

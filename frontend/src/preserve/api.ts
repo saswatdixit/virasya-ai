@@ -57,6 +57,7 @@ export interface StoryPayload {
     marksCount?: number;
     wordIntegrityPassed?: boolean;
   };
+  visibility?: "private" | "family" | "community" | "public" | string;
   finalSettings?: {
     visibility?: string;
     confirmed?: boolean;
@@ -228,6 +229,12 @@ export async function saveStoryToBackend(story: StoryPayload): Promise<{ status:
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const storyId = story.id || `story_${Date.now()}`;
+        const draftVisibility =
+          story.visibility ||
+          story.finalSettings?.visibility ||
+          (story as any).visibility ||
+          "private";
+
         const { error } = await supabase.from("stories").upsert({
           id: storyId,
           user_id: user.id,
@@ -243,11 +250,12 @@ export async function saveStoryToBackend(story: StoryPayload): Promise<{ status:
           vocabulary: story.vocabulary || [],
           punctuation: story.punctuation || {},
           final_settings: story.finalSettings || {},
+          visibility: draftVisibility,
           status: "draft",
           updated_at: new Date().toISOString(),
         });
         if (!error) {
-          return { status: "success", story: { ...story, id: storyId } };
+          return { status: "success", story: { ...story, id: storyId, visibility: draftVisibility } };
         }
       }
     } catch (err) {
@@ -257,6 +265,32 @@ export async function saveStoryToBackend(story: StoryPayload): Promise<{ status:
 
   // Local browser draft fallback for guest exploration
   return { status: "preview_local", story };
+}
+
+export async function getUserDraftFromBackend(): Promise<StoryPayload | null> {
+  const supabase = getSupabase();
+  if (supabase && isSupabaseConfigured()) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data, error } = await supabase
+          .from("stories")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("status", "draft")
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data) {
+          return storyRowToStoryPayload(data);
+        }
+      }
+    } catch (err) {
+      console.warn("Supabase getUserDraftFromBackend notice:", err);
+    }
+  }
+  return null;
 }
 
 export async function getStoryFromBackend(storyId: string): Promise<StoryPayload> {

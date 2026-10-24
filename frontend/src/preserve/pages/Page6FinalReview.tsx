@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { usePreserve } from "../context/PreserveContext";
 import { wordCount } from "../utils";
 import AudioPlayer from "../components/AudioPlayer";
@@ -18,6 +18,13 @@ export default function Page6FinalReview() {
 
   const [validationError, setValidationError] = useState("");
   const [isPreserving, setIsPreserving] = useState(false);
+
+  // Fall back unsupported disabled options (community/family) to 'private'
+  useEffect(() => {
+    if (final.visibility === "community" || final.visibility === "family") {
+      setVisibility("private");
+    }
+  }, [final.visibility, setVisibility]);
 
   // Carry forward punctuated manual text, or fall back to transcript draft or form story
   const finalText = punct.manual !== null ? punct.manual : (ed.text || form.story || "");
@@ -118,12 +125,20 @@ export default function Page6FinalReview() {
               </div>
               <div className="p-success-meta-item">
                 <span className="p-side-label">Archive Visibility</span>
-                <span style={{ textTransform: "capitalize" }}>{final.visibility}</span>
+                <span>
+                  {final.visibility === "private"
+                    ? "Private (Only You)"
+                    : final.visibility === "public"
+                    ? "Public Heritage Archive"
+                    : final.visibility}
+                </span>
               </div>
             </div>
 
             <div className="p-success-excerpt">
-              <h3 className="p-side-title" style={{ marginBottom: 8 }}>Preserved Odia Narrative</h3>
+              <h3 className="p-side-title" style={{ marginBottom: 8 }}>
+                Preserved {form.language ? `${form.language} ` : ""}Narrative
+              </h3>
               <p className="p-preserved-text">{finalText}</p>
             </div>
 
@@ -136,11 +151,20 @@ export default function Page6FinalReview() {
 
             <div className="p-success-actions">
               <a
-                href="/explore"
+                href="/my-archive"
                 className="p-btn p-btn-brass"
               >
-                View in Explore Archive <span className="p-ar">↗</span>
+                View in My Archive <span className="p-ar">↗</span>
               </a>
+
+              {final.visibility === "public" && (
+                <a
+                  href="/explore"
+                  className="p-btn p-btn-ghost"
+                >
+                  View in Explore Archive <span className="p-ar">↗</span>
+                </a>
+              )}
 
               <a
                 href="/"
@@ -297,6 +321,30 @@ export default function Page6FinalReview() {
                   Archive Visibility
                 </label>
                 <div className="p-radio-options" role="radiogroup" aria-labelledby="visibility-label">
+                  {/* Option 1: Private (Only You) */}
+                  <label className={`p-radio-card ${final.visibility === "private" ? "is-selected" : ""}`}>
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="private"
+                      checked={final.visibility === "private"}
+                      onChange={() => setVisibility("private")}
+                      className="p-radio-input"
+                    />
+                    <div className="p-radio-body">
+                      <div className="p-radio-head">
+                        <strong className="p-radio-title">Private (Only You)</strong>
+                        <span className="p-radio-badge" style={{ background: "rgba(100, 116, 139, 0.15)", color: "var(--v-ink)" }}>
+                          Sovereign Vault
+                        </span>
+                      </div>
+                      <p className="p-radio-desc">
+                        Preserved exclusively in your private sovereign archive. Accessible only to your authenticated account; excluded from the public Explore catalog.
+                      </p>
+                    </div>
+                  </label>
+
+                  {/* Option 2: Public Heritage Archive */}
                   <label className={`p-radio-card ${final.visibility === "public" ? "is-selected" : ""}`}>
                     <input
                       type="radio"
@@ -312,41 +360,53 @@ export default function Page6FinalReview() {
                         <span className="p-radio-badge">Recommended</span>
                       </div>
                       <p className="p-radio-desc">
-                        Available in the Virasya Explore catalog for researchers and future generations.
+                        Published to the Virasya Explore catalog for researchers, community archives, and future generations.
                       </p>
                     </div>
                   </label>
 
-                  <label className={`p-radio-card ${final.visibility === "community" ? "is-selected" : ""}`}>
+                  {/* Option 3: Community Heritage (Coming Soon) */}
+                  <label className="p-radio-card is-disabled" style={{ opacity: 0.6, cursor: "not-allowed" }}>
                     <input
                       type="radio"
                       name="visibility"
                       value="community"
-                      checked={final.visibility === "community"}
-                      onChange={() => setVisibility("community")}
+                      disabled
+                      aria-disabled="true"
                       className="p-radio-input"
                     />
                     <div className="p-radio-body">
-                      <strong className="p-radio-title">Community Heritage Only</strong>
+                      <div className="p-radio-head">
+                        <strong className="p-radio-title">Community Heritage</strong>
+                        <span className="p-radio-badge" style={{ background: "rgba(180, 83, 9, 0.15)", color: "#b45309" }}>
+                          Coming Soon
+                        </span>
+                      </div>
                       <p className="p-radio-desc">
-                        Visible only within recognized dialect and regional community circles.
+                        Dialect and regional community collective vaults are in active development.
                       </p>
                     </div>
                   </label>
 
-                  <label className={`p-radio-card ${final.visibility === "family" ? "is-selected" : ""}`}>
+                  {/* Option 4: Family Circle (Coming Soon) */}
+                  <label className="p-radio-card is-disabled" style={{ opacity: 0.6, cursor: "not-allowed" }}>
                     <input
                       type="radio"
                       name="visibility"
                       value="family"
-                      checked={final.visibility === "family"}
-                      onChange={() => setVisibility("family")}
+                      disabled
+                      aria-disabled="true"
                       className="p-radio-input"
                     />
                     <div className="p-radio-body">
-                      <strong className="p-radio-title">Family Circle</strong>
+                      <div className="p-radio-head">
+                        <strong className="p-radio-title">Family Circle</strong>
+                        <span className="p-radio-badge" style={{ background: "rgba(180, 83, 9, 0.15)", color: "#b45309" }}>
+                          Coming Soon
+                        </span>
+                      </div>
                       <p className="p-radio-desc">
-                        Preserved privately with restricted family access tokens.
+                        Restricted family sharing circles and lineage archives are in active development.
                       </p>
                     </div>
                   </label>

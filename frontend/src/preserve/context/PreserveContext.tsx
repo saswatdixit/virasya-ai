@@ -35,6 +35,7 @@ import {
 } from "../utils";
 import {
   saveStoryToBackend,
+  getUserDraftFromBackend,
   preserveStoryOnBackend,
   transcribeAudioOnBackend,
   fetchModelStatus,
@@ -113,6 +114,8 @@ interface PreserveContextType {
   sim: SimControls;
   savedAt: string | null;
   resumeDraft: PreserveState | null;
+  cloudDraft: PreserveState | null;
+  cloudDraftUpdatedAt: string | null;
   leaveModalOpen: boolean;
   dockOpen: boolean;
   isTranscribing: boolean;
@@ -173,11 +176,111 @@ interface PreserveContextType {
   setPermissionConfirmed: (val: boolean) => void;
   preserveStoryAction: () => void;
   resetAll: () => void;
-  resumeFromSaved: () => void;
-  dismissResume: () => void;
+  resumeFromSaved: (source?: "local" | "cloud") => void;
+  dismissResume: (source?: "all" | "local" | "cloud") => void;
 }
 
 const PreserveContext = createContext<PreserveContextType | null>(null);
+
+function cloudDraftToPreserveState(story: any): PreserveState {
+  const form: StoryForm = {
+    title: story.title || "",
+    carrier: story.carrier || "",
+    category: story.category || "",
+    place: story.place || story.roots || "",
+    language: story.language || "Hindi",
+    period: story.period || "",
+    relationship: story.relationship || "",
+    story: story.writtenText || story.written_text || story.story || "",
+    email: story.email || "",
+  };
+
+  const audioItem: AudioItem | null = story.audio
+    ? {
+        name: story.audio.filename || story.audio.name || "cloud-audio",
+        url: story.audio.url || null,
+        size: story.audio.size ?? null,
+        duration: story.audio.duration ?? null,
+        kind: story.audio.storage_path ? "uploaded" : ((story.audio.kind as any) || "lost"),
+        storage_path: story.audio.storage_path,
+        bucket: story.audio.bucket,
+      }
+    : null;
+
+  let derivedStage = 1;
+  if (audioItem || form.story) derivedStage = 2;
+  const rawTx = story.raw_transcripts || {};
+  if (story.workingDraft || story.working_draft || (rawTx && Object.keys(rawTx).length > 0)) derivedStage = 3;
+  if (Array.isArray(story.vocabulary) && story.vocabulary.length > 0) derivedStage = 4;
+  if (story.punctuation && (story.punctuation.finalText || Object.keys(story.punctuation).length > 0)) derivedStage = 5;
+
+  const workingText = story.workingDraft || story.working_draft || story.writtenText || story.written_text || story.story || "";
+
+  const rawVisibility =
+    story.visibility ||
+    story.finalSettings?.visibility ||
+    story.final_settings?.visibility ||
+    "public";
+
+  const validVisibility =
+    rawVisibility === "public" || rawVisibility === "private"
+      ? rawVisibility
+      : "private";
+
+  return {
+    stage: derivedStage,
+    storyId: story.id,
+    completed: {},
+    skipped: {},
+    form,
+    audio: audioItem,
+    transcriptionStyle: story.transcription_style || "verbatim",
+    tx: {
+      forAudio: audioItem ? audioItem.name : "",
+      gnani: rawTx.gnani || { status: "idle", p: 0, text: "" },
+      vaani: rawTx.vaani || { status: "idle", p: 0, text: "" },
+      conformer: rawTx.indicconformer || rawTx.conformer || { status: "idle", p: 0, text: "" },
+    },
+    enh: {
+      status: "idle",
+      base: "vaani",
+      decisions: {},
+    },
+    ed: {
+      text: workingText,
+      loadedFrom: workingText ? "draft" : null,
+      baseText: workingText,
+      drafts: [],
+      notice: "",
+      undoStack: workingText ? [workingText] : [],
+    },
+    vocab: Array.isArray(story.vocabulary)
+      ? story.vocabulary.map((v: any) => ({
+          id: v.id || uid(),
+          heard: v.heard || "",
+          preferred: v.preferred || "",
+          meaning: v.meaning || "",
+          language: v.language || form.language,
+          context: v.context || "",
+          kind: v.kind,
+          pronunciation: v.pronunciation,
+          isSample: false,
+        }))
+      : [],
+    punct: {
+      status: "idle",
+      decisions: {},
+      manual: story.punctuation?.finalText || null,
+      done: Boolean(story.punctuation?.finalText),
+    },
+    final: {
+      visibility: validVisibility as any,
+      confirmed: Boolean(story.finalSettings?.confirmed || story.final_settings?.confirmed),
+      permissionConfirmed: Boolean(story.finalSettings?.permissionConfirmed || story.final_settings?.permission_confirmed),
+      isPreserved: false,
+    },
+  };
+}
 
 export function PreserveProvider({ children }: { children: ReactNode }) {
   const { user, profile, openAuthModal } = useAuth();
@@ -198,6 +301,8 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   const [leaveModalOpen, setLeaveModalOpen] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
   const [resumeDraft, setResumeDraft] = useState<PreserveState | null>(null);
+  const [cloudDraft, setCloudDraft] = useState<PreserveState | null>(null);
+  const [cloudDraftUpdatedAt, setCloudDraftUpdatedAt] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
   const simRef = useRef(sim);
@@ -208,8 +313,9 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   const activeStorageKey = getDraftStorageKey(user?.id);
   const prevUserIdRef = useRef<string | null | undefined>(user?.id);
 
-  // Check localStorage for previous draft on mount or user identity change (VIR-SEC-006)
+  // Check localStorage and Supabase for previous draft on mount or user identity change (VIR-SEC-006)
   useEffect(() => {
+    let active = true;
     const prevId = prevUserIdRef.current;
     prevUserIdRef.current = user?.id;
 
@@ -219,13 +325,15 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         // Always reset in-memory state so previous user's draft is not shown on screen
         setState({ ...INITIAL_STATE });
         setResumeDraft(null);
+        setCloudDraft(null);
+        setCloudDraftUpdatedAt(null);
         if (!user?.id) {
           // Logged out: return early after clearing in-memory presentation
           return;
         }
       }
 
-      // 2. Check user-scoped draft
+      // 2. Check user-scoped local draft
       let raw = localStorage.getItem(activeStorageKey);
 
       // 3. If guest just signed in, migrate guest draft into their user-scoped storage key
@@ -246,10 +354,36 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         if (d && typeof d === "object" && d.form && (d.form.title || d.form.story || d.stage > 1)) {
           setResumeDraft(d);
         }
+      } else {
+        setResumeDraft(null);
+      }
+
+      // 4. If user is authenticated and Supabase is configured, check cloud draft
+      if (user?.id && isSupabaseConfigured()) {
+        getUserDraftFromBackend()
+          .then((cloudStory) => {
+            if (!active) return;
+            if (cloudStory) {
+              const cloudState = cloudDraftToPreserveState(cloudStory);
+              setCloudDraft(cloudState);
+              setCloudDraftUpdatedAt(cloudStory.updated_at || null);
+            } else {
+              setCloudDraft(null);
+              setCloudDraftUpdatedAt(null);
+            }
+          })
+          .catch(() => {});
+      } else {
+        setCloudDraft(null);
+        setCloudDraftUpdatedAt(null);
       }
     } catch {
       // Ignore storage errors safely
     }
+
+    return () => {
+      active = false;
+    };
   }, [user?.id, activeStorageKey]);
 
   // Sync route on popstate (browser back/forward)
@@ -333,10 +467,14 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
                   size: s.audio.size,
                   duration: s.audio.duration,
                   kind: s.audio.kind,
+                  storage_path: s.audio.storage_path,
+                  bucket: s.audio.bucket,
                 }
               : null,
             workingDraft: s.punct.manual || s.ed.text || s.form.story,
             vocabulary: s.vocab,
+            finalSettings: s.final,
+            visibility: s.final.visibility,
             status: "draft",
           })
             .then((res) => {
@@ -1118,31 +1256,55 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     } catch {}
     setState({ ...INITIAL_STATE });
     setResumeDraft(null);
+    setCloudDraft(null);
+    setCloudDraftUpdatedAt(null);
     setLeaveModalOpen(false);
     goToStep(1);
   }, [goToStep, activeStorageKey]);
 
-  const resumeFromSaved = useCallback(() => {
-    if (resumeDraft) {
-      setState({
-        ...resumeDraft,
-        transcriptionStyle: resumeDraft.transcriptionStyle || "verbatim",
-      });
+  const resumeFromSaved = useCallback((source?: "local" | "cloud") => {
+    const chosenDraft =
+      source === "cloud"
+        ? cloudDraft
+        : source === "local"
+        ? resumeDraft
+        : resumeDraft || cloudDraft;
+
+    if (chosenDraft) {
+      if (resumeDraft && source !== "cloud") {
+        setState({
+          ...chosenDraft,
+          transcriptionStyle: resumeDraft.transcriptionStyle || "verbatim",
+        });
+      } else {
+        setState({
+          ...chosenDraft,
+          transcriptionStyle: chosenDraft.transcriptionStyle || "verbatim",
+        });
+      }
       setResumeDraft(null);
-      const target = STEP_DEFINITIONS.find((s) => s.step === resumeDraft.stage);
+      setCloudDraft(null);
+      const target = STEP_DEFINITIONS.find((s) => s.step === chosenDraft.stage);
       if (target && window.location.pathname !== target.route) {
         window.history.pushState(null, "", target.route);
       }
     }
-  }, [resumeDraft]);
+  }, [resumeDraft, cloudDraft]);
 
-  const dismissResume = useCallback(() => {
-    try {
-      localStorage.removeItem(activeStorageKey);
-      localStorage.removeItem(STORAGE_KEY_GUEST);
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {}
-    setResumeDraft(null);
+  const dismissResume = useCallback((source?: "all" | "local" | "cloud") => {
+    const targetSource = source || "all";
+    if (targetSource === "all" || targetSource === "local") {
+      try {
+        localStorage.removeItem(activeStorageKey);
+        localStorage.removeItem(STORAGE_KEY_GUEST);
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {}
+      setResumeDraft(null);
+    }
+    if (targetSource === "all" || targetSource === "cloud") {
+      setCloudDraft(null);
+      setCloudDraftUpdatedAt(null);
+    }
   }, [activeStorageKey]);
 
   const isTranscribing =
@@ -1157,6 +1319,8 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         sim,
         savedAt,
         resumeDraft,
+        cloudDraft,
+        cloudDraftUpdatedAt,
         leaveModalOpen,
         dockOpen,
         isTranscribing,

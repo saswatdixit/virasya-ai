@@ -2,14 +2,207 @@ import { usePreserve } from "../context/PreserveContext";
 
 export default function DraftBanner() {
   const {
+    resumeDraft,
+    cloudDraft,
+    cloudDraftUpdatedAt,
+    resumeFromSaved,
+    dismissResume,
     leaveModalOpen,
     setLeaveModalOpen,
     resetAll,
   } = usePreserve();
 
+  const hasLocal = Boolean(resumeDraft);
+  const hasCloud = Boolean(cloudDraft);
+  const hasConflict = hasLocal && hasCloud;
+
   return (
     <>
-      {/* Save Draft and Leave Modal */}
+      {/* 1. Unfinished Draft Recovery Banner */}
+      {(hasLocal || hasCloud) && (
+        <section
+          className="p-draft-recovery-banner"
+          role="region"
+          aria-label="Unfinished draft recovery"
+        >
+          <div className="p-wrap">
+            <div className="p-draft-banner-card">
+              <div className="p-draft-banner-head">
+                <div className="p-draft-badge-row">
+                  <span className="p-draft-tag">
+                    {hasConflict
+                      ? "Draft Conflict Detected"
+                      : hasCloud
+                      ? "Cloud Draft Available"
+                      : "Local Draft Available"}
+                  </span>
+                  <button
+                    type="button"
+                    className="p-draft-dismiss-btn"
+                    onClick={() => dismissResume("all")}
+                    aria-label="Dismiss draft recovery banner"
+                    title="Dismiss"
+                  >
+                    ×
+                  </button>
+                </div>
+                <h3 className="p-draft-banner-title">
+                  {hasConflict
+                    ? "Choose which story draft to resume"
+                    : hasCloud
+                    ? "Resume your cloud story draft?"
+                    : "Resume your local story draft?"}
+                </h3>
+                <p className="p-draft-banner-desc">
+                  {hasConflict
+                    ? "You have an active draft saved locally in this browser, and another draft in your sovereign cloud archive. Choose which one to continue, or discard both to start fresh."
+                    : hasCloud
+                    ? "We found an unfinished story draft in your sovereign cloud archive. Continue where you paused across devices."
+                    : "We found an unfinished story draft saved in this browser. You can pick up right where you paused."}
+                </p>
+              </div>
+
+              {/* Conflict Options Grid */}
+              {hasConflict ? (
+                <div className="p-draft-conflict-grid">
+                  {/* Local Option */}
+                  <div className="p-draft-option-card">
+                    <div className="p-draft-option-meta">
+                      <span className="p-draft-source-pill local">Local Browser Draft</span>
+                      <span className="p-draft-step-num">Step {resumeDraft?.stage} / 06</span>
+                    </div>
+                    <h4 className="p-draft-option-title">
+                      {resumeDraft?.form.title || "Untitled Story"}
+                    </h4>
+                    <p className="p-draft-option-sub">
+                      Storyteller: {resumeDraft?.form.carrier || "Not specified"} &middot;{" "}
+                      {resumeDraft?.form.language || "Hindi"}
+                    </p>
+                    <div className="p-draft-option-actions">
+                      <button
+                        type="button"
+                        className="p-btn p-btn-brass p-draft-action-btn"
+                        onClick={() => resumeFromSaved("local")}
+                      >
+                        Resume Local Draft <span className="p-ar">→</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="p-draft-discard-link"
+                        onClick={() => dismissResume("local")}
+                      >
+                        Discard local
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Cloud Option */}
+                  <div className="p-draft-option-card">
+                    <div className="p-draft-option-meta">
+                      <span className="p-draft-source-pill cloud">Sovereign Cloud Draft</span>
+                      <span className="p-draft-step-num">Step {cloudDraft?.stage} / 06</span>
+                    </div>
+                    <h4 className="p-draft-option-title">
+                      {cloudDraft?.form.title || "Untitled Story"}
+                    </h4>
+                    <p className="p-draft-option-sub">
+                      Storyteller: {cloudDraft?.form.carrier || "Not specified"} &middot;{" "}
+                      {cloudDraft?.form.language || "Hindi"}
+                      {cloudDraftUpdatedAt && (
+                        <span>
+                          {" "}
+                          &middot; Updated {new Date(cloudDraftUpdatedAt).toLocaleDateString()}
+                        </span>
+                      )}
+                    </p>
+                    <div className="p-draft-option-actions">
+                      <button
+                        type="button"
+                        className="p-btn p-btn-brass p-draft-action-btn"
+                        onClick={() => resumeFromSaved("cloud")}
+                      >
+                        Resume Cloud Draft <span className="p-ar">→</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="p-draft-discard-link"
+                        onClick={() => dismissResume("cloud")}
+                      >
+                        Discard cloud
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Single Draft Actions (Local or Cloud only) */
+                <div className="p-draft-single-actions">
+                  <div className="p-draft-single-info">
+                    <strong>
+                      {hasCloud
+                        ? cloudDraft?.form.title || "Untitled Story"
+                        : resumeDraft?.form.title || "Untitled Story"}
+                    </strong>
+                    <span>
+                      {" "}
+                      — Step {hasCloud ? cloudDraft?.stage : resumeDraft?.stage} of 06 (
+                      {hasCloud
+                        ? `${cloudDraft?.form.language || "Hindi"} · ${
+                            cloudDraft?.form.carrier || "Storyteller"
+                          }`
+                        : `${resumeDraft?.form.language || "Hindi"} · ${
+                            resumeDraft?.form.carrier || "Storyteller"
+                          }`}
+                      )
+                    </span>
+                  </div>
+                  <div className="p-draft-btn-group">
+                    <button
+                      type="button"
+                      className="p-btn p-btn-brass"
+                      onClick={() => resumeFromSaved(hasCloud ? "cloud" : "local")}
+                    >
+                      {hasCloud ? "Resume Cloud Draft" : "Resume Draft"}{" "}
+                      <span className="p-ar">→</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="p-btn p-btn-ghost"
+                      onClick={() => dismissResume(hasCloud ? "cloud" : "local")}
+                    >
+                      Discard & Start Fresh
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Archival Audio Binaries Recovery Notice */}
+              <div className="p-draft-audio-disclaimer" role="note">
+                <svg
+                  className="p-draft-disclaimer-icon"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                <div className="p-draft-disclaimer-text">
+                  <strong>Audio persistence notice:</strong> Un-uploaded audio recordings created on another device cannot be restored automatically across browser sessions. If your recovered draft has missing audio, you can easily re-attach or re-record in Step 2.
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* 2. Save Draft and Leave Modal */}
       {leaveModalOpen && (
         <div
           className="p-full-overlay"
@@ -21,7 +214,10 @@ export default function DraftBanner() {
             <div className="p-eyebrow" style={{ color: "var(--v-cream)" }}>
               PRESERVATION DRAFT
             </div>
-            <h2 className="p-title" style={{ color: "var(--v-cream)", fontSize: "clamp(36px, 5vw, 64px)" }}>
+            <h2
+              className="p-title"
+              style={{ color: "var(--v-cream)", fontSize: "clamp(36px, 5vw, 64px)" }}
+            >
               Your draft is safely kept.
             </h2>
             <p className="p-lede" style={{ color: "var(--v-cream)", margin: "16px 0 28px" }}>

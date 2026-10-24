@@ -11,6 +11,7 @@ import Closing from "../sections/Closing/Closing";
 import Dialogs from "../components/shared/Dialogs";
 import PreserveApp from "../preserve/PreserveApp";
 import ExplorePage from "../explore/ExplorePage";
+import MyArchivePage from "../archive/MyArchivePage";
 import { AuthProvider, AuthModal, useAuth } from "../auth";
 import ErrorBoundary from "../components/shared/ErrorBoundary";
 import { PreserveStoryIcon, CulturalHostIcon, SearchIcon } from "../components/shared/Icons";
@@ -184,11 +185,13 @@ function AppContent() {
 
   const isPreserveRoute = currentPath.startsWith("/preserve-your-story");
   const isExploreRoute = currentPath === "/explore";
+  const isArchiveRoute = currentPath === "/my-archive" || currentPath === "/private-vault";
   const isPlaceholder = currentPath in PLACEHOLDER_CONFIGS;
 
   const isHomeRoute =
     !isPreserveRoute &&
     !isExploreRoute &&
+    !isArchiveRoute &&
     !isPlaceholder;
 
   useEffect(() => {
@@ -209,7 +212,12 @@ function AppContent() {
       return <PreserveApp />;
     }
 
-    // 3. Configured Placeholders (Search, Vault, Hosts)
+    // 3. My Archive & Sovereign Vault
+    if (isArchiveRoute) {
+      return <MyArchivePage />;
+    }
+
+    // 4. Configured Placeholders (Search, Hosts)
     if (isPlaceholder) {
       return <PlaceholderPage path={currentPath} />;
     }

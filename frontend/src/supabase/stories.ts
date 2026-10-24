@@ -105,6 +105,7 @@ export async function preserveStoryToSupabase(
   const payloadWithProvenance: StoryPayload = {
     ...story,
     id: storyId,
+    visibility: story.finalSettings?.visibility || (story as any).visibility || "public",
     finalSettings: {
       ...(story.finalSettings || {}),
       visibility: story.finalSettings?.visibility || (story as any).visibility || "public",

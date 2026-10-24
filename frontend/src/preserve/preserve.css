@@ -2311,6 +2311,26 @@ pre.p-prov-json {
   user-select: none;
 }
 
+.p-radio-card.is-disabled,
+.p-vis-card.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: rgba(244, 235, 221, 0.4);
+  border-color: rgba(48, 34, 29, 0.12);
+}
+
+.p-radio-card.is-disabled:hover,
+.p-vis-card.is-disabled:hover {
+  background: rgba(244, 235, 221, 0.4);
+  border-color: rgba(48, 34, 29, 0.12);
+  box-shadow: none;
+}
+
+.p-radio-card.is-disabled input[type="radio"],
+.p-vis-card.is-disabled input[type="radio"] {
+  cursor: not-allowed;
+}
+
 .p-radio-card:hover,
 .p-vis-card:hover {
   background: #ffffff;
@@ -2772,5 +2792,210 @@ pre.p-prov-json {
   border-radius: 4px;
   font-weight: 500;
 }
+
+/* ==========================================================================
+   Draft Recovery & Conflict Resolution Banner
+   ========================================================================== */
+.p-draft-recovery-banner {
+  background: #fbf8f2;
+  border-bottom: 1.5px solid var(--v-line);
+  padding: 18px 0;
+  animation: fadeIn 0.25s ease-out;
+}
+
+.p-draft-banner-card {
+  background: #ffffff;
+  border: 1.5px solid var(--v-brass);
+  border-radius: 8px;
+  padding: 20px 24px;
+  box-shadow: 0 4px 18px rgba(48, 34, 29, 0.06);
+}
+
+.p-draft-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.p-draft-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  background: rgba(184, 93, 50, 0.12);
+  color: var(--v-terracotta);
+  border-radius: 4px;
+}
+
+.p-draft-dismiss-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--v-muted);
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color 0.15s ease;
+}
+
+.p-draft-dismiss-btn:hover {
+  color: var(--v-ink);
+}
+
+.p-draft-banner-title {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--v-ink);
+  margin: 0 0 6px;
+}
+
+.p-draft-banner-desc {
+  font-size: 14px;
+  color: var(--v-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.p-draft-conflict-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin: 16px 0;
+}
+
+.p-draft-option-card {
+  background: #fbf9f5;
+  border: 1.5px solid var(--v-line);
+  border-radius: 6px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.15s ease;
+}
+
+.p-draft-option-card:hover {
+  border-color: var(--v-brass);
+}
+
+.p-draft-option-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.p-draft-source-pill {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.p-draft-source-pill.local {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.p-draft-source-pill.cloud {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.p-draft-step-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--v-muted);
+}
+
+.p-draft-option-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--v-ink);
+  margin: 0;
+}
+
+.p-draft-option-sub {
+  font-size: 13px;
+  color: var(--v-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.p-draft-option-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.p-draft-action-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+.p-draft-discard-link {
+  background: none;
+  border: none;
+  font-size: 12px;
+  color: var(--v-muted);
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+.p-draft-discard-link:hover {
+  color: #dc2626;
+}
+
+.p-draft-single-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--v-line);
+}
+
+.p-draft-single-info {
+  font-size: 14px;
+  color: var(--v-ink);
+}
+
+.p-draft-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.p-draft-audio-disclaimer {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: rgba(244, 235, 221, 0.7);
+  border: 1px solid rgba(184, 93, 50, 0.25);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--v-ink);
+}
+
+.p-draft-disclaimer-icon {
+  flex-shrink: 0;
+  color: var(--v-terracotta);
+  margin-top: 1px;
+}
+
+.p-draft-disclaimer-text {
+  line-height: 1.5;
+}
+
 
 
