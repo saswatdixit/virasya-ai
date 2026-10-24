@@ -45,10 +45,10 @@ export default function DraftBanner() {
                     className="p-draft-dismiss-btn"
                     disabled={isDiscardingDraft}
                     onClick={dismissBanner}
-                    aria-label="Dismiss draft recovery banner"
-                    title="Dismiss"
+                    aria-label="Discard unfinished draft permanently"
+                    title={isDiscardingDraft ? "Discarding..." : "Discard draft permanently"}
                   >
-                    ×
+                    {isDiscardingDraft ? "…" : "×"}
                   </button>
                 </div>
                 <h3 className="p-draft-banner-title">

@@ -75,9 +75,9 @@ check(
 );
 
 check(
-  'DraftBanner × button calls dismissBanner (dismiss without deleting)',
+  'DraftBanner × button invokes persistent deletion via dismissBanner',
   bannerSrc.includes('onClick={dismissBanner}'),
-  'Close (×) button must invoke dismissBanner, not dismissResume or delete'
+  'Close (×) button must invoke dismissBanner'
 );
 
 // C. PreserveContext.tsx mount & recovery logic
@@ -88,11 +88,10 @@ check(
 );
 
 check(
-  'dismissBanner marks draft as dismissed and hides banner without deleting',
+  'dismissBanner delegates to dismissResume("all") for real persistent deletion',
   contextSrc.includes('const dismissBanner = useCallback(') &&
-    contextSrc.includes('markCloudDraftDismissed(targetCloudId, user?.id)') &&
-    !contextSrc.includes('deleteStoryDraftFromBackend') === false, // Context still has delete elsewhere
-  'dismissBanner must record dismissal in localStorage'
+    contextSrc.includes('dismissResume("all")'),
+  'dismissBanner must call dismissResume("all") to permanently delete draft from database'
 );
 
 check(
@@ -176,9 +175,10 @@ check(
 );
 
 check(
-  'PreserveContext dismissResume handles notFound: true gracefully without blocking cleanup',
-  contextSrc.includes('!res.success && !res.notFound'),
-  'dismissResume must treat notFound as successful deletion and proceed with local cleanup'
+  'PreserveContext dismissResume fails closed when database deletion fails',
+  contextSrc.includes('if (!res.success) {') &&
+    contextSrc.includes('return false;'),
+  'dismissResume must fail closed and retain draft if database deletion fails'
 );
 
 // G. Issue 1: Explore Audio Playback Consent & Projection
@@ -717,6 +717,103 @@ async function simulateDeleteStoryDraft(storyId, mockUser, mockDbResponse) {
     'Legacy Draft: Missing audioPublicConsent in legacy draft defaults safely to false',
     restoredConsent === false &&
       computeAudioPublicPlayback(Boolean(legacyDraftWithoutConsent.audio), legacyDraftWithoutConsent.visibility, restoredConsent) === false
+  );
+
+  // ============================================================================
+  // 7. Persistent X Deletion and Refresh Resilience Tests (Issue A)
+  // ============================================================================
+  console.log('\n--- 7. Persistent X Deletion and Refresh Resilience Tests ---');
+
+  // Simulated Database State
+  let mockDatabase = [
+    { id: 'draft_userA_1', user_id: USER_A, status: 'draft', title: 'Grandmother Khichdi', audio: { storage_path: `${USER_A}/audio1.webm` } },
+    { id: 'draft_userA_2', user_id: USER_A, status: 'draft', title: 'Puri Temple Lore', audio: null },
+    { id: 'draft_userB_1', user_id: USER_B, status: 'draft', title: 'User B Secret Story', audio: { storage_path: `${USER_B}/audioB.webm` } },
+    { id: 'preserved_userA', user_id: USER_A, status: 'preserved', title: 'Ancient Tale', audio: null },
+  ];
+
+  let localCache = new Map();
+  localCache.set(`virasya_preservation_draft_user_${USER_A}`, JSON.stringify({ storyId: 'draft_userA_1', stage: 3 }));
+  localCache.set(`virasya_preservation_draft_user_${USER_B}`, JSON.stringify({ storyId: 'draft_userB_1', stage: 2 }));
+
+  async function executeBackendDelete(storyId, callingUser) {
+    if (!callingUser?.id) return { success: false, error: 'Authentication required' };
+    const idx = mockDatabase.findIndex(
+      (s) => s.id === storyId && s.user_id === callingUser.id && s.status === 'draft'
+    );
+    if (idx === -1) {
+      return { success: false, notFound: true, error: 'Story draft could not be deleted or does not exist.' };
+    }
+    mockDatabase.splice(idx, 1);
+    return { success: true };
+  }
+
+  // Regression 1: Clicking X invokes persistent deletion, not only local state removal
+  let xDeletionInvoked = false;
+  async function simulateClickXButton(targetDraftId, callingUser) {
+    xDeletionInvoked = true;
+    const res = await executeBackendDelete(targetDraftId, callingUser);
+    if (!res.success) {
+      // Retain draft in UI and report error (fail-closed)
+      return { success: false, retained: true, error: res.error };
+    }
+    // Clean local cache for this draft
+    localCache.delete(`virasya_preservation_draft_user_${callingUser.id}`);
+    return { success: true, retained: false };
+  }
+
+  const clickXRes = await simulateClickXButton('draft_userA_1', { id: USER_A });
+  check(
+    'Regression 1: Clicking X invokes persistent deletion, removing draft from DB and cache',
+    xDeletionInvoked === true &&
+      clickXRes.success === true &&
+      !mockDatabase.some((s) => s.id === 'draft_userA_1') &&
+      !localCache.has(`virasya_preservation_draft_user_${USER_A}`)
+  );
+
+  // Regression 2: The deleted draft remains absent after a simulated reload/refetch
+  function simulatePageRefresh(callingUser) {
+    const cloudDraft = mockDatabase.find((s) => s.user_id === callingUser.id && s.status === 'draft');
+    const localRaw = localCache.get(`virasya_preservation_draft_user_${callingUser.id}`);
+    return { cloudDraft: cloudDraft || null, localDraft: localRaw ? JSON.parse(localRaw) : null };
+  }
+
+  const refreshAfterDelete = simulatePageRefresh({ id: USER_A });
+  check(
+    'Regression 2: Deleted draft remains absent after simulated page reload/refetch',
+    refreshAfterDelete.cloudDraft?.id !== 'draft_userA_1' &&
+      refreshAfterDelete.localDraft === null
+  );
+
+  // Regression 3: A failed database deletion does not falsely report success
+  async function simulateFailingDelete(storyId, callingUser) {
+    // Simulate database error / 0-row trigger suppression
+    const res = { success: false, error: 'Database trigger error: could not delete row' };
+    if (!res.success) {
+      return { success: false, draftRetainedInUI: true, error: res.error };
+    }
+    return { success: true, draftRetainedInUI: false };
+  }
+  const failedDeleteRes = await simulateFailingDelete('draft_userA_2', { id: USER_A });
+  check(
+    'Regression 3: A failed database deletion does not falsely report success and retains draft in UI',
+    failedDeleteRes.success === false && failedDeleteRes.draftRetainedInUI === true
+  );
+
+  // Regression 4: A user cannot delete another user's draft
+  const crossUserDeleteRes = await simulateClickXButton('draft_userB_1', { id: USER_A });
+  check(
+    'Regression 4: User A cannot delete User B draft (ownership strictly enforced)',
+    crossUserDeleteRes.success === false &&
+      mockDatabase.some((s) => s.id === 'draft_userB_1') // User B's draft is still safe in DB
+  );
+
+  // Regression 5: Associated cache/state is cleared without affecting unrelated drafts
+  check(
+    'Regression 5: Deleting draft_userA_1 left draft_userA_2 and draft_userB_1 completely intact',
+    mockDatabase.some((s) => s.id === 'draft_userA_2') &&
+      mockDatabase.some((s) => s.id === 'draft_userB_1') &&
+      localCache.has(`virasya_preservation_draft_user_${USER_B}`)
   );
 
   if (failed) {

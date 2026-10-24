@@ -160,8 +160,8 @@ export default function MyArchivePage() {
     try {
       const res = await deleteStoryDraftFromBackend(targetId);
 
-      // Successfully deleted from database, or verified already absent
-      if (res.success || res.notFound) {
+      // Successfully deleted from authoritative database
+      if (res.success) {
         // 1. Audio object storage cleanup if draft contained recorded audio
         if (target.audio?.storage_path && user?.id) {
           const cleanPath = target.audio.storage_path.trim();

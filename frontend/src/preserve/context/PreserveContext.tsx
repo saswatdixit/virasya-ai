@@ -28,7 +28,6 @@ import {
   getDraftStorageKey,
   LANGUAGE_OPTIONS,
   isCloudDraftDismissed,
-  markCloudDraftDismissed,
   clearCloudDraftDismissed,
 } from "../types";
 
@@ -52,6 +51,7 @@ import {
   preserveStoryToSupabase,
   isSupabaseConfigured,
   uploadAudioToPrivateBucket,
+  deleteAudioFromPrivateBucket,
 } from "../../supabase";
 import {
   MAX_AUDIO_SIZE_BYTES,
@@ -1399,16 +1399,6 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
 
   const clearDiscardError = useCallback(() => setDiscardError(null), []);
 
-  const dismissBanner = useCallback(() => {
-    const targetCloudId = cloudDraftStoryId || cloudDraft?.storyId || resumeDraft?.storyId;
-    if (targetCloudId) {
-      markCloudDraftDismissed(targetCloudId, user?.id);
-    }
-    setCloudDraft(null);
-    setCloudDraftUpdatedAt(null);
-    setResumeDraft(null);
-  }, [cloudDraftStoryId, cloudDraft?.storyId, resumeDraft?.storyId, user?.id]);
-
   const dismissResume = useCallback((source?: "all" | "local" | "cloud") => {
     return (async (): Promise<boolean> => {
       const targetSource = source || "all";
@@ -1424,12 +1414,28 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
           setIsDiscardingDraft(true);
           try {
             const res = await deleteStoryDraftFromBackend(targetCloudId);
-            if (!res.success && !res.notFound) {
+            if (!res.success) {
               const errMsg =
                 res.error || "Failed to permanently discard cloud draft. Please try again.";
               setDiscardError(errMsg);
               setIsDiscardingDraft(false);
-              return false; // Do not report success or start fresh draft!
+              return false; // Do not report success or start fresh draft if database delete failed!
+            }
+            // Clean up associated draft audio object from storage if path belongs to user
+            const draftAudio = cloudDraft?.audio || resumeDraft?.audio;
+            if (draftAudio?.storage_path && user?.id) {
+              const cleanPath = draftAudio.storage_path.trim();
+              if (
+                cleanPath.startsWith(`${user.id}/`) &&
+                !cleanPath.includes("..") &&
+                !cleanPath.includes("\\")
+              ) {
+                try {
+                  await deleteAudioFromPrivateBucket(cleanPath);
+                } catch (audioErr) {
+                  console.warn("[PreserveContext] Audio cleanup notice on draft discard:", audioErr);
+                }
+              }
             }
             // Mark as discarded so late in-flight or subsequent fetches cannot restore it
             discardedDraftIdsRef.current.add(targetCloudId);
@@ -1480,6 +1486,10 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
       return true;
     })();
   }, [cloudDraftStoryId, cloudDraft, resumeDraft, user?.id, activeStorageKey]);
+
+  const dismissBanner = useCallback(() => {
+    return dismissResume("all");
+  }, [dismissResume]);
 
   const isTranscribing =
     transcriptionPhase === "checking" ||
