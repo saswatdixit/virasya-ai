@@ -187,22 +187,74 @@ def test_auth_required_mode(live_server, monkeypatch, synthetic_wav):
     assert status_tx == HTTPStatus.UNAUTHORIZED
     assert res_tx["code"] == "AUTH_REQUIRED"
 
+    # Unauthenticated audio download rejected
+    get_status, _ = http_get(f"{live_server}/api/audio/sample.wav")
+    assert get_status == HTTPStatus.UNAUTHORIZED
+
+    # Authenticated user cannot fall back to shared unauthenticated root in production
+    root_file = INPUT_AUDIO_DIR / "secret_root.wav"
+    root_file.write_bytes(synthetic_wav.read_bytes())
+    try:
+        user_c = {"id": "user_ccc_789", "email": "c@example.com"}
+        with patch("virasya_ai.web.server.StudioHandler._verify_supabase_bearer_token", return_value=user_c):
+            status_c, res_c = http_post_json(
+                f"{live_server}/api/transcribe",
+                {"filename": "secret_root.wav", "language_code": "hi-IN"},
+                headers={"Authorization": "Bearer token_user_c"},
+            )
+            assert status_c == HTTPStatus.BAD_REQUEST
+            assert "not found" in res_c["error"].lower()
+
+            get_status_c, _ = http_get(
+                f"{live_server}/api/audio/secret_root.wav",
+                headers={"Authorization": "Bearer token_user_c"},
+            )
+            assert get_status_c == HTTPStatus.NOT_FOUND
+    finally:
+        root_file.unlink(missing_ok=True)
+
 
 def test_cors_headers_with_allowed_origins(live_server, monkeypatch):
     monkeypatch.setenv("VIRASYA_ALLOWED_ORIGINS", "https://virasya.ai,https://virasya.vercel.app")
 
+    # Approved origin receives exact Access-Control-Allow-Origin header
     req = urllib.request.Request(
         f"{live_server}/api/health",
         headers={"Origin": "https://virasya.ai"},
     )
     with urllib.request.urlopen(req) as resp:
         assert resp.headers.get("Access-Control-Allow-Origin") == "https://virasya.ai"
+        assert resp.headers.get("Vary") == "Origin"
 
-    # Unmatched origin falls back to first allowed origin
+    # Disallowed origin is rejected (no Access-Control-Allow-Origin header returned)
     req2 = urllib.request.Request(
         f"{live_server}/api/health",
         headers={"Origin": "https://malicious-site.com"},
     )
     with urllib.request.urlopen(req2) as resp2:
-        assert resp2.headers.get("Access-Control-Allow-Origin") == "https://virasya.ai"
+        assert resp2.headers.get("Access-Control-Allow-Origin") is None
+
+    # Non-browser requests (no Origin header) proceed normally without CORS headers
+    req3 = urllib.request.Request(f"{live_server}/api/health")
+    with urllib.request.urlopen(req3) as resp3:
+        assert resp3.status == HTTPStatus.OK
+        assert resp3.headers.get("Access-Control-Allow-Origin") is None
+
+
+def test_path_traversal_rejection(live_server):
+    # Encoded traversal attempt
+    status, _ = http_get(f"{live_server}/api/audio/%2e%2e%2fetc%2fpasswd")
+    assert status in (HTTPStatus.BAD_REQUEST, HTTPStatus.NOT_FOUND)
+
+
+def test_production_startup_validation(monkeypatch):
+    from virasya_ai.web.server import main
+    monkeypatch.setenv("VIRASYA_REQUIRE_AUTH", "true")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("VITE_SUPABASE_URL", raising=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert "FATAL CONFIGURATION ERROR" in str(exc_info.value)
+
 

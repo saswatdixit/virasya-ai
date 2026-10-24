@@ -64,6 +64,56 @@ _MAX_CONCURRENT_TRANSCRIBES = int(os.getenv("VIRASYA_MAX_CONCURRENT_TRANSCRIBES"
 _TRANSCRIPTION_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_TRANSCRIBES)
 
 
+def _resolve_scratch_file(
+    user_id: str | None,
+    raw_filename: str,
+    *,
+    require_auth: bool = False,
+    must_exist: bool = True,
+) -> Path | None:
+    """Safely resolve an audio scratch file enforcing user boundary, no traversal, and no symlinks."""
+    try:
+        unquoted = urllib.parse.unquote(raw_filename)
+        safe_name = sanitize_filename(unquoted)
+    except (ValueError, TypeError):
+        return None
+
+    if user_id:
+        try:
+            safe_user_id = sanitize_filename(str(user_id))
+        except ValueError:
+            return None
+        target_dir = (INPUT_AUDIO_DIR / safe_user_id).resolve()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        candidate = (target_dir / safe_name).resolve()
+        if not candidate.is_relative_to(target_dir):
+            return None
+        if candidate.is_symlink():
+            return None
+        if must_exist:
+            if candidate.exists() and candidate.is_file():
+                return candidate
+            return None
+        return candidate
+
+    # In production with authentication required, NEVER fall back to unauthenticated root
+    if require_auth:
+        return None
+
+    # Local development / test fallback
+    target_dir = INPUT_AUDIO_DIR.resolve()
+    candidate = (target_dir / safe_name).resolve()
+    if not candidate.is_relative_to(target_dir):
+        return None
+    if candidate.is_symlink():
+        return None
+    if must_exist:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+        return None
+    return candidate
+
+
 class StudioHandler(BaseHTTPRequestHandler):
     server_version = "VirasyaStudio/2.0"
 
@@ -73,16 +123,15 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def _set_cors_headers(self) -> None:
         allowed_env = os.getenv("VIRASYA_ALLOWED_ORIGINS", "*").strip()
-        origin_header = self.headers.get("Origin") or ""
+        origin_header = self.headers.get("Origin")
         if allowed_env == "*":
             self.send_header("Access-Control-Allow-Origin", "*")
-        else:
+        elif origin_header:
             allowed_list = [o.strip() for o in allowed_env.split(",") if o.strip()]
             if origin_header in allowed_list:
                 self.send_header("Access-Control-Allow-Origin", origin_header)
                 self.send_header("Vary", "Origin")
-            else:
-                self.send_header("Access-Control-Allow-Origin", allowed_list[0] if allowed_list else "*")
+            # If origin_header is not in allowed_list, omit Access-Control-Allow-Origin so browser blocks access
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 
@@ -231,9 +280,9 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._send_json({"error": str(exc), "code": "storage_error"}, HTTPStatus.INTERNAL_SERVER_ERROR)
         except VirasyaError as exc:
             self._send_json({"error": str(exc), "code": "application_error"}, HTTPStatus.BAD_REQUEST)
-        except Exception as exc:
+        except Exception:
             self._send_json(
-                {"error": f"Internal server error: {exc}", "code": "internal_error"},
+                {"error": "An internal server error occurred.", "code": "internal_error"},
                 HTTPStatus.INTERNAL_SERVER_ERROR,
             )
 
@@ -242,30 +291,27 @@ class StudioHandler(BaseHTTPRequestHandler):
     # -------------------------------------------------------------------------
 
     def _serve_audio_file(self, raw_filename: str) -> None:
-        try:
-            safe_name = sanitize_filename(raw_filename)
-        except ValueError:
-            self._send_json({"error": "Invalid filename."}, HTTPStatus.BAD_REQUEST)
-            return
-
+        require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
         token = self._extract_bearer_token()
         user_id: str | None = None
         if token:
             user_obj = self._verify_supabase_bearer_token(token)
             if user_obj and "id" in user_obj:
                 user_id = str(user_obj["id"])
+            else:
+                self._send_json(
+                    {"error": "Invalid or expired authorization token.", "code": "UNAUTHORIZED"},
+                    HTTPStatus.UNAUTHORIZED,
+                )
+                return
+        elif require_auth:
+            self._send_json(
+                {"error": "Authentication required to access audio files.", "code": "AUTH_REQUIRED"},
+                HTTPStatus.UNAUTHORIZED,
+            )
+            return
 
-        file_path: Path | None = None
-        if user_id:
-            user_file = INPUT_AUDIO_DIR / user_id / safe_name
-            if user_file.exists() and user_file.is_file():
-                file_path = user_file
-
-        if file_path is None:
-            root_file = INPUT_AUDIO_DIR / safe_name
-            if root_file.exists() and root_file.is_file():
-                file_path = root_file
-
+        file_path = _resolve_scratch_file(user_id, raw_filename, require_auth=require_auth, must_exist=True)
         if file_path is None or not file_path.is_file():
             self._send_json({"error": "Audio file not found or unauthorized."}, HTTPStatus.NOT_FOUND)
             return
@@ -294,6 +340,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         cleanup_stale_scratch_files(INPUT_AUDIO_DIR, max_age_seconds=3600.0)
 
         # Authentication / authorization checks
+        require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
         token = self._extract_bearer_token()
         user_id: str | None = None
         if token:
@@ -306,7 +353,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                     HTTPStatus.UNAUTHORIZED,
                 )
                 return
-        elif os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes"):
+        elif require_auth:
             self._send_json(
                 {"error": "Authentication required. Please sign in to upload audio.", "code": "AUTH_REQUIRED"},
                 HTTPStatus.UNAUTHORIZED,
@@ -327,7 +374,15 @@ class StudioHandler(BaseHTTPRequestHandler):
             )
             return
 
-        safe_name = sanitize_filename(original_filename)
+        dest_path = _resolve_scratch_file(user_id, original_filename, require_auth=require_auth, must_exist=False)
+        if dest_path is None:
+            self._send_json(
+                {"error": "Invalid or unsafe audio filename.", "code": "INVALID_FILENAME"},
+                HTTPStatus.BAD_REQUEST,
+            )
+            return
+
+        safe_name = dest_path.name
         audio_bytes = file_field.file.read(MAX_UPLOAD_BYTES + 1)
         if len(audio_bytes) > MAX_UPLOAD_BYTES:
             self._send_json(
@@ -339,12 +394,6 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Audio file is empty (0 bytes).", "code": "EMPTY_FILE"}, HTTPStatus.BAD_REQUEST)
             return
 
-        if user_id:
-            user_dir = INPUT_AUDIO_DIR / user_id
-            user_dir.mkdir(parents=True, exist_ok=True)
-            dest_path = user_dir / safe_name
-        else:
-            dest_path = INPUT_AUDIO_DIR / safe_name
         dest_path.write_bytes(audio_bytes)
 
         # Enforce duration limit <= 60 seconds and decodability at server boundary
@@ -406,6 +455,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             return
 
         # JSON body expected by React frontend: { filename: "...", model: "both|vaani", story_id: "..." }
+        require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
         token = self._extract_bearer_token()
         user_id: str | None = None
         if token:
@@ -418,7 +468,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                     HTTPStatus.UNAUTHORIZED,
                 )
                 return
-        elif os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes"):
+        elif require_auth:
             self._send_json(
                 {"error": "Authentication required. Please sign in to transcribe audio.", "code": "AUTH_REQUIRED"},
                 HTTPStatus.UNAUTHORIZED,
@@ -430,20 +480,11 @@ class StudioHandler(BaseHTTPRequestHandler):
         if not filename or not isinstance(filename, str):
             raise ValueError("A valid 'filename' string is required for transcription.")
 
-        safe_name = sanitize_filename(filename)
-        audio_path: Path | None = None
-        if user_id:
-            user_file = INPUT_AUDIO_DIR / user_id / safe_name
-            if user_file.exists() and user_file.is_file():
-                audio_path = user_file
+        audio_path = _resolve_scratch_file(user_id, filename, require_auth=require_auth, must_exist=True)
+        if audio_path is None or not audio_path.is_file():
+            raise ValueError(f"Audio file '{sanitize_filename(filename)}' not found. Please upload it first.")
 
-        if audio_path is None:
-            root_file = INPUT_AUDIO_DIR / safe_name
-            if root_file.exists() and root_file.is_file():
-                audio_path = root_file
-
-        if audio_path is None:
-            raise ValueError(f"Audio file '{safe_name}' not found. Please upload it first.")
+        safe_name = audio_path.name
 
         # Re-enforce size and duration boundaries before sending to GNANI API
         if audio_path.stat().st_size > MAX_UPLOAD_BYTES:
@@ -917,6 +958,14 @@ def main() -> None:
         port = int(raw_port)
     except ValueError as exc:
         raise SystemExit(f"Server port must be an integer (received: '{raw_port}').") from exc
+
+    require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
+    supabase_url = os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL")
+    if require_auth and not supabase_url:
+        raise SystemExit(
+            "FATAL CONFIGURATION ERROR: VIRASYA_REQUIRE_AUTH is enabled, but neither "
+            "SUPABASE_URL nor VITE_SUPABASE_URL is configured. Server cannot verify authentication tokens."
+        )
 
     default_host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
     host = os.getenv("VIRASYA_WEB_HOST", default_host)

@@ -151,6 +151,7 @@ def _content_type(path: Path) -> str:
         ".flac": "audio/flac",
         ".aac": "audio/aac",
         ".m4a": "audio/mp4",
+        ".webm": "audio/webm",
     }.get(path.suffix.lower(), "application/octet-stream")
 
 
