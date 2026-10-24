@@ -41,6 +41,9 @@ interface TranscribeRequestBody {
   language_code?: string;
   story_id?: string;
   storyId?: string;
+  format?: string;
+  transcription_style?: string;
+  transcriptionStyle?: string;
 }
 
 // Supported Indic languages for Gnani Prisma STT
@@ -225,9 +228,12 @@ Deno.serve(async (req: Request) => {
 
     // 8. Build native FormData for Gnani Prisma STT v2.5
     const targetLanguageCode = normalizeLanguageCode(body.language_code || body.language);
+    const requestedFormat = (body.format || body.transcription_style || body.transcriptionStyle)?.toLowerCase() === "transcribe"
+      ? "transcribe"
+      : "verbatim";
     const formData = new FormData();
     formData.append("language_code", targetLanguageCode);
-    formData.append("format", "verbatim");
+    formData.append("format", requestedFormat);
 
     let mimeType = "audio/wav";
     if (validation.format === "webm") mimeType = "audio/webm";
@@ -348,6 +354,8 @@ Deno.serve(async (req: Request) => {
         filename,
         provider: "gnani-prisma-v2.5",
         model: "Gnani Prisma STT v2.5",
+        format: requestedFormat,
+        transcription_style: requestedFormat,
         transcript: transcriptText,
         raw_text: transcriptText,
         inference_seconds: elapsedSeconds,
