@@ -17,7 +17,8 @@ assert(!p5Content.includes("runPunctuationModel"), "Page 5 must not call automat
 assert(!p5Content.includes("punctuateTextOnBackend"), "Page 5 must not call punctuateTextOnBackend");
 
 // Must retain full manual punctuation tools
-assert(p5Content.includes("Odia Punctuation Editor"), "Page 5 must include Odia Punctuation Editor");
+assert(p5Content.includes("Punctuation Editor"), "Page 5 must include Punctuation Editor");
+assert(!p5Content.includes("Odia Punctuation Editor"), "Page 5 must not include Odia-specific editor branding");
 assert(p5Content.includes("Purna Virama (Danda)"), "Page 5 must provide Danda mark insertion");
 assert(p5Content.includes("Double Danda"), "Page 5 must provide Double Danda insertion");
 assert(p5Content.includes("Reset to unpunctuated draft"), "Page 5 must support resetting to draft");

@@ -1,5 +1,14 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import { usePreserve } from "../context/PreserveContext";
+import {
+  getPunctuationProfile,
+  applyPunctuationMark,
+  calculatePunctuationMetrics,
+} from "../punctuationProfiles";
+import type {
+  PunctuationMarkItem,
+  PunctuationCategory,
+} from "../punctuationProfiles";
 
 export default function Page5Punctuation() {
   const {
@@ -8,6 +17,10 @@ export default function Page5Punctuation() {
     setManualPunct,
   } = usePreserve();
 
+  // Story language from application state (defaults gracefully if unspecified)
+  const storyLanguage = state.form.language || "Hindi";
+  const profile = useMemo(() => getPunctuationProfile(storyLanguage), [storyLanguage]);
+
   // Initial text: carried forward from manual punctuation, working draft, or step 1 story
   const baseWorkingText = state.ed.text || state.form.story || "";
   const currentText = state.punct.manual !== null ? state.punct.manual : baseWorkingText;
@@ -15,6 +28,7 @@ export default function Page5Punctuation() {
   const [text, setText] = useState<string>(() => currentText);
   const unpunctuatedDraft = state.punct.unpunctuatedDraft || baseWorkingText;
   const [showRawTranscripts, setShowRawTranscripts] = useState(false);
+  const [activeTab, setActiveTab] = useState<"recommended" | "all" | PunctuationCategory>("recommended");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Handle changes and persist to context
@@ -28,43 +42,26 @@ export default function Page5Punctuation() {
     });
   };
 
-  // Quick insertion of Odia punctuation marks at cursor position
-  const insertMark = (mark: string) => {
+  // Insertion of universal or language-specific punctuation mark at cursor position / wrapping selection
+  const handleInsertMark = (item: PunctuationMarkItem) => {
     const el = textareaRef.current;
-    if (!el) {
-      const next = text + mark;
-      setText(next);
-      setManualPunct(next, {
-        modelSuggestion: null,
-        unpunctuatedDraft,
-        isModelPunctuated: false,
-      });
-      return;
-    }
+    const start = el ? el.selectionStart : text.length;
+    const end = el ? el.selectionEnd : text.length;
 
-    const start = el.selectionStart ?? text.length;
-    const end = el.selectionEnd ?? text.length;
-
-    let insertion = mark;
-    const afterChar = text[end] || "";
-    if (mark === "।" || mark === "॥" || mark === ",") {
-      insertion = afterChar === " " ? mark : mark + " ";
-    }
-
-    const next = text.slice(0, start) + insertion + text.slice(end);
-    setText(next);
-    setManualPunct(next, {
+    const { nextText, nextCursorPos } = applyPunctuationMark(text, item, start, end);
+    setText(nextText);
+    setManualPunct(nextText, {
       modelSuggestion: null,
       unpunctuatedDraft,
       isModelPunctuated: false,
     });
 
-    // Restore cursor position after inserted mark
-    setTimeout(() => {
-      el.focus();
-      const newPos = start + insertion.length;
-      el.setSelectionRange(newPos, newPos);
-    }, 10);
+    if (el) {
+      setTimeout(() => {
+        el.focus();
+        el.setSelectionRange(nextCursorPos, nextCursorPos);
+      }, 10);
+    }
   };
 
   // Reset to original unpunctuated working draft
@@ -89,11 +86,8 @@ export default function Page5Punctuation() {
     goToStep(6);
   };
 
-  // Live statistics
-  const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
-  const dandaCount = (text.match(/।/g) || []).length;
-  const commaCount = (text.match(/,/g) || []).length;
-  const questionCount = (text.match(/\?/g) || []).length;
+  // Live statistics using language-aware metrics calculator
+  const metrics = useMemo(() => calculatePunctuationMetrics(text), [text]);
 
   const rawGnaniText = state.tx.gnani?.text || state.tx.vaani?.text || "";
 
@@ -109,7 +103,7 @@ export default function Page5Punctuation() {
                 Restore the breath of the spoken word.
               </h1>
               <p className="p-compact-lede">
-                Review pauses, sentence stops (।), and oral rhythm for authentic cultural preservation.
+                Review pauses, sentence cadence, and phrasing for authentic cultural preservation.
               </p>
             </div>
             <div className="p-header-meta">
@@ -144,7 +138,7 @@ export default function Page5Punctuation() {
             ✦
           </span>
           <div>
-            <strong>Manual Punctuation Review:</strong> AI punctuation model coming soon. You have complete editorial control to refine sentence stops (।) and pauses using the Odia punctuation palette or by typing directly in the editor below.
+            <strong>Manual Punctuation Review:</strong> AI punctuation model coming soon. You have complete editorial control to refine sentence stops (including Purna Virama (Danda) and Double Danda for Indic languages, or periods), dialogue quotes, and pauses using the language-aware punctuation palette or by typing directly in the editor below.
           </div>
         </div>
 
@@ -155,12 +149,26 @@ export default function Page5Punctuation() {
               <span className="p-panel-num">1</span>
               <div style={{ flex: 1, display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
                 <div>
-                  <h2 className="p-panel-title">Odia Punctuation Editor</h2>
+                  <h2 className="p-panel-title">Punctuation Editor</h2>
                   <p className="p-panel-sub">
-                    Click punctuation buttons or type directly in Odia script
+                    Insert punctuation marks, dialogue quotes, and pauses, or edit directly in the text editor
                   </p>
                 </div>
-                <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      color: "#8C4F00",
+                      background: "#F2E8D5",
+                      padding: "3px 8px",
+                      borderRadius: "4px",
+                      border: "1px solid #E2D3B8",
+                    }}
+                    title={`Active punctuation profile: ${profile.displayName} (${profile.scriptName})`}
+                  >
+                    Profile: {profile.displayName}
+                  </span>
                   <button
                     type="button"
                     className="p-btn-text p-btn-sm"
@@ -173,106 +181,194 @@ export default function Page5Punctuation() {
               </div>
             </div>
 
-            {/* Quick Insertion Palette */}
+            {/* Universal & Language-Aware Palette Container */}
             <div
               className="p-punct-palette"
               style={{
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                gap: "8px",
                 marginBottom: "14px",
-                padding: "8px 12px",
+                padding: "10px 14px",
                 background: "#FAF6F0",
                 borderRadius: "6px",
                 border: "1px solid #EADCBA",
               }}
               role="toolbar"
-              aria-label="Odia punctuation palette"
+              aria-label="Universal punctuation palette"
             >
-              <span style={{ fontSize: "12px", fontWeight: 700, color: "#8C4F00", marginRight: "4px" }}>
-                Quick Insert:
-              </span>
-
-              <button
-                type="button"
-                className="p-btn p-btn-ghost p-btn-sm"
-                onClick={() => insertMark("।")}
-                title="Purna Virama (Danda) — Sentence stop"
-                style={{ fontFamily: "'Noto Serif Odia', serif", fontSize: "16px", minWidth: "36px", padding: "4px 8px" }}
+              {/* Category Filter Tabs */}
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: "6px",
+                  marginBottom: "10px",
+                  borderBottom: "1px solid #EFE4CC",
+                  paddingBottom: "8px",
+                }}
               >
-                । <span style={{ fontSize: "10px", marginLeft: "2px", opacity: 0.7 }}>danda</span>
-              </button>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#8C4F00", marginRight: "4px" }}>
+                  Palette:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("recommended")}
+                  style={{
+                    background: activeTab === "recommended" ? "#8C4F00" : "transparent",
+                    color: activeTab === "recommended" ? "#FFFFFF" : "#5A442E",
+                    border: "1px solid " + (activeTab === "recommended" ? "#8C4F00" : "#D8C4A9"),
+                    borderRadius: "4px",
+                    padding: "2px 8px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  ★ Recommended for {profile.displayName.split(" ")[0]}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("all")}
+                  style={{
+                    background: activeTab === "all" ? "#8C4F00" : "transparent",
+                    color: activeTab === "all" ? "#FFFFFF" : "#5A442E",
+                    border: "1px solid " + (activeTab === "all" ? "#8C4F00" : "#D8C4A9"),
+                    borderRadius: "4px",
+                    padding: "2px 8px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  All Symbols
+                </button>
+                {profile.availableGroups.map((grp) => (
+                  <button
+                    key={grp.id}
+                    type="button"
+                    onClick={() => setActiveTab(grp.id)}
+                    style={{
+                      background: activeTab === grp.id ? "#8C4F00" : "transparent",
+                      color: activeTab === grp.id ? "#FFFFFF" : "#5A442E",
+                      border: "1px solid " + (activeTab === grp.id ? "#8C4F00" : "#D8C4A9"),
+                      borderRadius: "4px",
+                      padding: "2px 8px",
+                      fontSize: "11px",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {grp.name}
+                  </button>
+                ))}
+              </div>
 
-              <button
-                type="button"
-                className="p-btn p-btn-ghost p-btn-sm"
-                onClick={() => insertMark("॥")}
-                title="Double Danda — Section or stanza end"
-                style={{ fontFamily: "'Noto Serif Odia', serif", fontSize: "16px", minWidth: "36px", padding: "4px 8px" }}
+              {/* Marks Button Row */}
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
               >
-                ॥ <span style={{ fontSize: "10px", marginLeft: "2px", opacity: 0.7 }}>double</span>
-              </button>
+                {/* 1. Recommended Tab */}
+                {activeTab === "recommended" && (
+                  profile.primaryMarks.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="p-btn p-btn-ghost p-btn-sm"
+                      onClick={() => handleInsertMark(item)}
+                      title={item.title}
+                      aria-label={item.ariaLabel || item.title}
+                      style={{
+                        fontFamily: item.fontFamily || profile.fontFamily,
+                        fontSize: item.mark.length > 2 ? "13px" : "15px",
+                        minWidth: "36px",
+                        padding: "4px 8px",
+                        background: "#FFFDF9",
+                        border: "1px solid #D8C4A9",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+                      }}
+                    >
+                      {item.display}{" "}
+                      <span style={{ fontSize: "10px", marginLeft: "2px", opacity: 0.65, fontWeight: 400 }}>
+                        {item.label}
+                      </span>
+                    </button>
+                  ))
+                )}
 
-              <button
-                type="button"
-                className="p-btn p-btn-ghost p-btn-sm"
-                onClick={() => insertMark(",")}
-                title="Koma — Short pause"
-                style={{ fontSize: "15px", minWidth: "32px", padding: "4px 8px" }}
-              >
-                , <span style={{ fontSize: "10px", marginLeft: "2px", opacity: 0.7 }}>pause</span>
-              </button>
+                {/* 2. All Symbols Tab */}
+                {activeTab === "all" && (
+                  profile.availableGroups.map((grp) => (
+                    <div
+                      key={grp.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        paddingRight: "8px",
+                        borderRight: "1px solid #E8DCBE",
+                        marginRight: "4px",
+                      }}
+                    >
+                      <span style={{ fontSize: "10px", textTransform: "uppercase", color: "#8C4F00", fontWeight: 700 }}>
+                        {grp.name.split(" ")[0]}:
+                      </span>
+                      {grp.marks.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="p-btn p-btn-ghost p-btn-sm"
+                          onClick={() => handleInsertMark(item)}
+                          title={item.title}
+                          aria-label={item.ariaLabel || item.title}
+                          style={{
+                            fontFamily: item.fontFamily || profile.fontFamily,
+                            fontSize: item.mark.length > 2 ? "13px" : "15px",
+                            minWidth: "32px",
+                            padding: "4px 6px",
+                            background: "#FFFDF9",
+                            border: "1px solid #D8C4A9",
+                          }}
+                        >
+                          {item.display}
+                        </button>
+                      ))}
+                    </div>
+                  ))
+                )}
 
-              <button
-                type="button"
-                className="p-btn p-btn-ghost p-btn-sm"
-                onClick={() => insertMark("?")}
-                title="Prasnabachaka — Question mark"
-                style={{ fontSize: "14px", minWidth: "32px", padding: "4px 8px" }}
-              >
-                ?
-              </button>
-
-              <button
-                type="button"
-                className="p-btn p-btn-ghost p-btn-sm"
-                onClick={() => insertMark("“")}
-                title="Opening quote"
-                style={{ fontSize: "14px", minWidth: "28px", padding: "4px 8px" }}
-              >
-                “
-              </button>
-
-              <button
-                type="button"
-                className="p-btn p-btn-ghost p-btn-sm"
-                onClick={() => insertMark("”")}
-                title="Closing quote"
-                style={{ fontSize: "14px", minWidth: "28px", padding: "4px 8px" }}
-              >
-                ”
-              </button>
-
-              <button
-                type="button"
-                className="p-btn p-btn-ghost p-btn-sm"
-                onClick={() => insertMark("!")}
-                title="Exclamation mark"
-                style={{ fontSize: "14px", minWidth: "28px", padding: "4px 8px" }}
-              >
-                !
-              </button>
-
-              <button
-                type="button"
-                className="p-btn p-btn-ghost p-btn-sm"
-                onClick={() => insertMark("—")}
-                title="Em dash"
-                style={{ fontSize: "14px", minWidth: "28px", padding: "4px 8px" }}
-              >
-                —
-              </button>
+                {/* 3. Specific Category Tab */}
+                {activeTab !== "recommended" && activeTab !== "all" && (
+                  profile.availableGroups
+                    .find((grp) => grp.id === activeTab)
+                    ?.marks.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="p-btn p-btn-ghost p-btn-sm"
+                        onClick={() => handleInsertMark(item)}
+                        title={item.title}
+                        aria-label={item.ariaLabel || item.title}
+                        style={{
+                          fontFamily: item.fontFamily || profile.fontFamily,
+                          fontSize: "15px",
+                          minWidth: "36px",
+                          padding: "4px 8px",
+                          background: "#FFFDF9",
+                          border: "1px solid #D8C4A9",
+                        }}
+                      >
+                        {item.display}{" "}
+                        <span style={{ fontSize: "10px", marginLeft: "2px", opacity: 0.65, fontWeight: 400 }}>
+                          {item.label}
+                        </span>
+                      </button>
+                    ))
+                )}
+              </div>
             </div>
 
             {/* Main Textarea */}
@@ -282,7 +378,7 @@ export default function Page5Punctuation() {
                 className="p-textarea-review"
                 value={text}
                 onChange={handleTextChange}
-                placeholder="Enter or refine your Odia transcript with proper punctuation..."
+                placeholder={`Enter or refine your ${profile.displayName} transcript with proper punctuation, sentence stops, and pauses...`}
                 rows={10}
                 style={{
                   width: "100%",
@@ -293,10 +389,10 @@ export default function Page5Punctuation() {
                   borderRadius: "6px",
                   border: "1px solid #D8C4A9",
                   background: "#FFFDF9",
-                  fontFamily: "'Noto Serif Odia', 'Anek Odia', serif",
+                  fontFamily: profile.fontFamily,
                   boxSizing: "border-box",
                 }}
-                aria-label="Punctuated transcript"
+                aria-label={`Punctuated transcript in ${profile.displayName}`}
               />
             </div>
 
@@ -311,15 +407,20 @@ export default function Page5Punctuation() {
                 color: "var(--v-ink-muted, #6B625E)",
               }}
             >
-              <span>Words: <strong>{wordCount}</strong></span>
-              <span>Characters: <strong>{text.length}</strong></span>
-              <span>Sentences (।): <strong>{dandaCount}</strong></span>
-              {commaCount > 0 && <span>Pauses (,): <strong>{commaCount}</strong></span>}
-              {questionCount > 0 && <span>Questions (?): <strong>{questionCount}</strong></span>}
+              <span>Words: <strong>{metrics.words}</strong></span>
+              <span>Characters: <strong>{metrics.characters}</strong></span>
+              {metrics.dandas > 0 && <span>Dandas (।): <strong>{metrics.dandas}</strong></span>}
+              {metrics.doubleDandas > 0 && <span>Double Dandas (॥): <strong>{metrics.doubleDandas}</strong></span>}
+              {metrics.periods > 0 && <span>Periods (.): <strong>{metrics.periods}</strong></span>}
+              <span>Total Sentences: <strong>{metrics.totalSentences}</strong></span>
+              {metrics.commas > 0 && <span>Pauses (,): <strong>{metrics.commas}</strong></span>}
+              {metrics.questions > 0 && <span>Questions (?): <strong>{metrics.questions}</strong></span>}
+              {metrics.exclamations > 0 && <span>Exclamations (!): <strong>{metrics.exclamations}</strong></span>}
+              {metrics.quotes > 0 && <span>Quotes: <strong>{metrics.quotes}</strong></span>}
             </div>
           </div>
 
-          {/* Right Column: Cultural Context & Terminology Reference */}
+          {/* Right Column: Story Overview & Cultural Context */}
           <div className="p-card-panel p-side-info">
             <h3 className="p-side-title">Story Overview</h3>
             <div className="p-side-item">
@@ -332,7 +433,7 @@ export default function Page5Punctuation() {
             </div>
             <div className="p-side-item">
               <span className="p-side-label">Language / Dialect</span>
-              <span className="p-side-val">{state.form.language || "Odia"}</span>
+              <span className="p-side-val">{state.form.language || "Hindi"}</span>
             </div>
 
             {/* Carried Vocabulary Highlights */}

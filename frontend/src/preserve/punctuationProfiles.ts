@@ -1,0 +1,642 @@
+/**
+ * Virasya Universal & Language-Aware Punctuation Profiles
+ *
+ * Provides configurable punctuation profiles and smart formatting helpers
+ * across all languages supported by Virasya (Odia, Hindi, Bengali, Gujarati,
+ * Marathi, Punjabi, Tamil, Telugu, Kannada, Malayalam, English, and dialects).
+ */
+
+export type PunctuationCategory =
+  | "sentence"
+  | "pause"
+  | "inquiry_emotion"
+  | "quote_bracket"
+  | "connector"
+  | "traditional";
+
+export interface PunctuationMarkItem {
+  id: string;
+  mark: string;            // The raw character or token, e.g. "।", ".", "“ ”"
+  display: string;         // Visual symbol displayed on the button
+  label: string;           // Short human-readable label, e.g. "danda", "period", "comma"
+  title: string;           // Accessible tooltip explaining mark meaning and usage
+  category: PunctuationCategory;
+  isEnclosing?: boolean;   // True for pairs like "“ ”", "‘ ’", "( )", "[ ]"
+  ariaLabel?: string;
+  fontFamily?: string;     // Specific font override if needed for glyph rendering
+}
+
+export interface PunctuationProfile {
+  languageKey: string;
+  displayName: string;
+  scriptName: string;
+  fontFamily: string;
+  primaryMarks: PunctuationMarkItem[];
+  availableGroups: {
+    id: PunctuationCategory;
+    name: string;
+    marks: PunctuationMarkItem[];
+  }[];
+}
+
+export interface PunctuationMetrics {
+  words: number;
+  characters: number;
+  dandas: number;
+  doubleDandas: number;
+  periods: number;
+  totalSentences: number;
+  commas: number;
+  questions: number;
+  exclamations: number;
+  semicolons: number;
+  colons: number;
+  quotes: number;
+}
+
+// =============================================================================
+// UNIVERSAL PUNCTUATION CATALOG
+// =============================================================================
+
+export const PUNCTUATION_MARKS: Record<string, PunctuationMarkItem> = {
+  // Sentence Stops
+  danda: {
+    id: "danda",
+    mark: "।",
+    display: "।",
+    label: "danda",
+    title: "Purna Virama (Danda) — Traditional Indic sentence stop (।)",
+    category: "sentence",
+    ariaLabel: "Purna Virama or Danda sentence stop",
+  },
+  doubleDanda: {
+    id: "doubleDanda",
+    mark: "॥",
+    display: "॥",
+    label: "double",
+    title: "Deergha Virama (Double Danda) — Stanza, paragraph, or thematic conclusion (॥)",
+    category: "sentence",
+    ariaLabel: "Double Danda stanza conclusion",
+  },
+  period: {
+    id: "period",
+    mark: ".",
+    display: ".",
+    label: "period",
+    title: "Period / Full Stop — Standard sentence termination (.)",
+    category: "sentence",
+    ariaLabel: "Period full stop",
+  },
+
+  // Pauses & Delimiters
+  comma: {
+    id: "comma",
+    mark: ",",
+    display: ",",
+    label: "comma",
+    title: "Comma (Alpaviram) — Brief pause or clause separation (,)",
+    category: "pause",
+    ariaLabel: "Comma short pause",
+  },
+  semicolon: {
+    id: "semicolon",
+    mark: ";",
+    display: ";",
+    label: "semicolon",
+    title: "Semicolon (Ardhviram) — Intermediate pause connecting related clauses (;)",
+    category: "pause",
+    ariaLabel: "Semicolon intermediate pause",
+  },
+  colon: {
+    id: "colon",
+    mark: ":",
+    display: ":",
+    label: "colon",
+    title: "Colon — Introduces dialogue, quotation, or narrative explanation (:)",
+    category: "pause",
+    ariaLabel: "Colon introducer",
+  },
+  ellipsis: {
+    id: "ellipsis",
+    mark: "…",
+    display: "…",
+    label: "ellipsis",
+    title: "Ellipsis — Trail off, oral hesitation, or unspoken thought (…)",
+    category: "pause",
+    ariaLabel: "Ellipsis pause",
+  },
+
+  // Inquiry & Emotion
+  question: {
+    id: "question",
+    mark: "?",
+    display: "?",
+    label: "question",
+    title: "Question Mark (Prasnabachaka) — Direct inquiry or interrogation (?)",
+    category: "inquiry_emotion",
+    ariaLabel: "Question mark",
+  },
+  exclamation: {
+    id: "exclamation",
+    mark: "!",
+    display: "!",
+    label: "exclamation",
+    title: "Exclamation Mark (Vismayabodhaka) — Surprise, emphasis, or strong emotion (!)",
+    category: "inquiry_emotion",
+    ariaLabel: "Exclamation mark",
+  },
+
+  // Quotes & Enclosures
+  doubleQuotes: {
+    id: "doubleQuotes",
+    mark: "“ ”",
+    display: "“ ”",
+    label: "quotes",
+    title: "Double Curly Quotes — Dialogue, direct speech, or quotation (“ ”)",
+    category: "quote_bracket",
+    isEnclosing: true,
+    ariaLabel: "Double quotation marks",
+  },
+  singleQuotes: {
+    id: "singleQuotes",
+    mark: "‘ ’",
+    display: "‘ ’",
+    label: "single quotes",
+    title: "Single Curly Quotes — Nested quote, cultural term, or title (‘ ’)",
+    category: "quote_bracket",
+    isEnclosing: true,
+    ariaLabel: "Single quotation marks",
+  },
+  parentheses: {
+    id: "parentheses",
+    mark: "( )",
+    display: "( )",
+    label: "parentheses",
+    title: "Parentheses — Aside, clarification, or narrator comment ( )",
+    category: "quote_bracket",
+    isEnclosing: true,
+    ariaLabel: "Parentheses",
+  },
+  squareBrackets: {
+    id: "squareBrackets",
+    mark: "[ ]",
+    display: "[ ]",
+    label: "brackets",
+    title: "Square Brackets — Editorial gloss, contextual note, or dialect gloss [ ]",
+    category: "quote_bracket",
+    isEnclosing: true,
+    ariaLabel: "Square brackets",
+  },
+
+  // Connectors
+  emDash: {
+    id: "emDash",
+    mark: "—",
+    display: "—",
+    label: "em dash",
+    title: "Em Dash — Shift in thought, dramatic oral pause, or speaker change (—)",
+    category: "connector",
+    ariaLabel: "Em dash",
+  },
+  hyphen: {
+    id: "hyphen",
+    mark: "-",
+    display: "-",
+    label: "hyphen",
+    title: "Hyphen — Compound words or joined phrases (-)",
+    category: "connector",
+    ariaLabel: "Hyphen connector",
+  },
+};
+
+// =============================================================================
+// LANGUAGE PROFILES
+// =============================================================================
+
+const ALL_CATEGORIES_ORDER: PunctuationCategory[] = [
+  "sentence",
+  "pause",
+  "inquiry_emotion",
+  "quote_bracket",
+  "connector",
+];
+
+const CATEGORY_NAMES: Record<PunctuationCategory, string> = {
+  sentence: "Sentence Stops",
+  pause: "Pauses & Delimiters",
+  inquiry_emotion: "Tone & Inquiry",
+  quote_bracket: "Quotes & Brackets",
+  connector: "Connectors",
+  traditional: "Traditional Marks",
+};
+
+function buildCategoryGroups(): {
+  id: PunctuationCategory;
+  name: string;
+  marks: PunctuationMarkItem[];
+}[] {
+  const allMarksList = Object.values(PUNCTUATION_MARKS);
+  return ALL_CATEGORIES_ORDER.map((cat) => ({
+    id: cat,
+    name: CATEGORY_NAMES[cat],
+    marks: allMarksList.filter((m) => m.category === cat),
+  }));
+}
+
+/**
+ * Standard Odia Punctuation Profile
+ */
+export const ODIA_PROFILE: PunctuationProfile = {
+  languageKey: "Odia",
+  displayName: "Odia (ଓଡ଼ିଆ)",
+  scriptName: "Odia script",
+  fontFamily: "'Noto Serif Odia', 'Anek Odia', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.doubleDanda,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Standard Hindi / Devanagari Punctuation Profile
+ */
+export const HINDI_PROFILE: PunctuationProfile = {
+  languageKey: "Hindi",
+  displayName: "Hindi (हिन्दी)",
+  scriptName: "Devanagari script",
+  fontFamily: "'Noto Serif Devanagari', 'Noto Sans Devanagari', 'Mangal', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.doubleDanda,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Bengali Punctuation Profile
+ */
+export const BENGALI_PROFILE: PunctuationProfile = {
+  languageKey: "Bengali",
+  displayName: "Bengali (বাংলা)",
+  scriptName: "Bengali script",
+  fontFamily: "'Noto Serif Bengali', 'Noto Sans Bengali', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.doubleDanda,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Gujarati Punctuation Profile
+ */
+export const GUJARATI_PROFILE: PunctuationProfile = {
+  languageKey: "Gujarati",
+  displayName: "Gujarati (ગુજરાતી)",
+  scriptName: "Gujarati script",
+  fontFamily: "'Noto Serif Gujarati', 'Noto Sans Gujarati', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Marathi Punctuation Profile
+ */
+export const MARATHI_PROFILE: PunctuationProfile = {
+  languageKey: "Marathi",
+  displayName: "Marathi (मराठी)",
+  scriptName: "Devanagari script",
+  fontFamily: "'Noto Serif Devanagari', 'Noto Sans Devanagari', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.doubleDanda,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Punjabi Punctuation Profile
+ */
+export const PUNJABI_PROFILE: PunctuationProfile = {
+  languageKey: "Punjabi",
+  displayName: "Punjabi (ਪੰਜਾਬੀ)",
+  scriptName: "Gurmukhi script",
+  fontFamily: "'Noto Serif Gurmukhi', 'Noto Sans Gurmukhi', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Tamil Punctuation Profile
+ */
+export const TAMIL_PROFILE: PunctuationProfile = {
+  languageKey: "Tamil",
+  displayName: "Tamil (தமிழ்)",
+  scriptName: "Tamil script",
+  fontFamily: "'Noto Serif Tamil', 'Noto Sans Tamil', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Telugu Punctuation Profile
+ */
+export const TELUGU_PROFILE: PunctuationProfile = {
+  languageKey: "Telugu",
+  displayName: "Telugu (తెలుగు)",
+  scriptName: "Telugu script",
+  fontFamily: "'Noto Serif Telugu', 'Noto Sans Telugu', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Kannada Punctuation Profile
+ */
+export const KANNADA_PROFILE: PunctuationProfile = {
+  languageKey: "Kannada",
+  displayName: "Kannada (ಕನ್ನಡ)",
+  scriptName: "Kannada script",
+  fontFamily: "'Noto Serif Kannada', 'Noto Sans Kannada', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Malayalam Punctuation Profile
+ */
+export const MALAYALAM_PROFILE: PunctuationProfile = {
+  languageKey: "Malayalam",
+  displayName: "Malayalam (മലയാളം)",
+  scriptName: "Malayalam script",
+  fontFamily: "'Noto Serif Malayalam', 'Noto Sans Malayalam', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Universal & English Punctuation Profile
+ */
+export const UNIVERSAL_PROFILE: PunctuationProfile = {
+  languageKey: "Universal",
+  displayName: "Universal / English",
+  scriptName: "Multilingual",
+  fontFamily: "'Noto Serif', 'Georgia', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.emDash,
+    PUNCTUATION_MARKS.parentheses,
+  ],
+  availableGroups: buildCategoryGroups(),
+};
+
+/**
+ * Resolves the appropriate punctuation profile based on the story language.
+ */
+export function getPunctuationProfile(language?: string | null): PunctuationProfile {
+  if (!language) return UNIVERSAL_PROFILE;
+  const lang = language.trim().toLowerCase();
+
+  if (lang.includes("odia") || lang.includes("oriya") || lang.includes("sambalpuri") || lang.includes("koshali")) {
+    return ODIA_PROFILE;
+  }
+  if (lang.includes("hindi") || lang.includes("bhojpuri") || lang.includes("maithili") || lang.includes("sanskrit")) {
+    return HINDI_PROFILE;
+  }
+  if (lang.includes("marathi") || lang.includes("konkani")) {
+    return MARATHI_PROFILE;
+  }
+  if (lang.includes("bengali") || lang.includes("bangla") || lang.includes("assamese")) {
+    return BENGALI_PROFILE;
+  }
+  if (lang.includes("gujarati")) {
+    return GUJARATI_PROFILE;
+  }
+  if (lang.includes("punjabi") || lang.includes("gurmukhi")) {
+    return PUNJABI_PROFILE;
+  }
+  if (lang.includes("tamil")) {
+    return TAMIL_PROFILE;
+  }
+  if (lang.includes("telugu")) {
+    return TELUGU_PROFILE;
+  }
+  if (lang.includes("kannada")) {
+    return KANNADA_PROFILE;
+  }
+  if (lang.includes("malayalam")) {
+    return MALAYALAM_PROFILE;
+  }
+  if (lang.includes("english")) {
+    return {
+      ...UNIVERSAL_PROFILE,
+      languageKey: "English",
+      displayName: "English (India)",
+      scriptName: "Latin script",
+    };
+  }
+
+  return {
+    ...UNIVERSAL_PROFILE,
+    languageKey: language,
+    displayName: `${language} (Universal Profile)`,
+  };
+}
+
+// =============================================================================
+// SMART PUNCTUATION INSERTION
+// =============================================================================
+
+export interface InsertionResult {
+  nextText: string;
+  nextCursorPos: number;
+}
+
+/**
+ * Inserts a punctuation mark or enclosing pair into text at the cursor/selection position.
+ * Respects existing selection, smart spacing after sentence stops and commas,
+ * and maintains cursor inside quotes/parentheses when inserting an empty pair.
+ */
+export function applyPunctuationMark(
+  currentText: string,
+  item: PunctuationMarkItem,
+  selectionStart: number,
+  selectionEnd: number
+): InsertionResult {
+  const start = Math.max(0, Math.min(selectionStart, currentText.length));
+  const end = Math.max(start, Math.min(selectionEnd, currentText.length));
+  const selectedText = currentText.slice(start, end);
+
+  // 1. Handling enclosing pairs (quotes, parentheses, brackets)
+  if (item.isEnclosing) {
+    let openMark = "“";
+    let closeMark = "”";
+
+    if (item.id === "singleQuotes") {
+      openMark = "‘";
+      closeMark = "’";
+    } else if (item.id === "parentheses") {
+      openMark = "(";
+      closeMark = ")";
+    } else if (item.id === "squareBrackets") {
+      openMark = "[";
+      closeMark = "]";
+    }
+
+    if (selectedText.length > 0) {
+      // Wrap the existing selection
+      const wrapped = `${openMark}${selectedText}${closeMark}`;
+      const nextText = currentText.slice(0, start) + wrapped + currentText.slice(end);
+      return {
+        nextText,
+        nextCursorPos: start + wrapped.length,
+      };
+    } else {
+      // Insert empty pair and position cursor inside the pair
+      const pair = `${openMark}${closeMark}`;
+      const nextText = currentText.slice(0, start) + pair + currentText.slice(end);
+      return {
+        nextText,
+        nextCursorPos: start + openMark.length,
+      };
+    }
+  }
+
+  // 2. Handling standard punctuation marks (danda, period, comma, question, etc.)
+  let insertion = item.mark;
+  const afterChar = currentText[end] || "";
+  const standardDelimiters = ["।", "॥", ".", ",", "!", "?", ";", ":"];
+
+  if (standardDelimiters.includes(item.mark)) {
+    // If followed by space or newline or end-of-string, do not double-space; otherwise append single space
+    if (afterChar !== " " && afterChar !== "\n" && afterChar !== "" && afterChar !== "”" && afterChar !== "’" && afterChar !== ")" && afterChar !== "]") {
+      insertion = item.mark + " ";
+    }
+  }
+
+  const nextText = currentText.slice(0, start) + insertion + currentText.slice(end);
+  return {
+    nextText,
+    nextCursorPos: start + insertion.length,
+  };
+}
+
+// =============================================================================
+// LIVE METRICS CALCULATOR
+// =============================================================================
+
+export function calculatePunctuationMetrics(text: string): PunctuationMetrics {
+  const trimmed = text.trim();
+  const words = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
+  const characters = text.length;
+
+  const dandas = (text.match(/।/g) || []).length;
+  const doubleDandas = (text.match(/॥/g) || []).length;
+  const periods = (text.match(/\./g) || []).length;
+  const totalSentences = dandas + periods;
+
+  const commas = (text.match(/,/g) || []).length;
+  const questions = (text.match(/\?/g) || []).length;
+  const exclamations = (text.match(/!/g) || []).length;
+  const semicolons = (text.match(/;/g) || []).length;
+  const colons = (text.match(/:/g) || []).length;
+  const quotes = (text.match(/[“"'‘]/g) || []).length;
+
+  return {
+    words,
+    characters,
+    dandas,
+    doubleDandas,
+    periods,
+    totalSentences,
+    commas,
+    questions,
+    exclamations,
+    semicolons,
+    colons,
+    quotes,
+  };
+}
