@@ -249,7 +249,7 @@ export default function Page3Review() {
                 value={currentWorkingText}
                 onChange={(e) => updateWorkingText(e.target.value)}
                 placeholder="Review or type your story here in Odia…"
-                rows={11}
+                rows={6}
               />
             </div>
 

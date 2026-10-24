@@ -468,10 +468,54 @@ class Page6SubmissionMachine {
       sm5.apiCalls.length === 0
   );
 
+  // ============================================================================
+  // 6. Manual Transcript Textarea Height Matching & Responsive Rules
+  // ============================================================================
+  console.log('\n--- 6. Manual Transcript Textarea Height Matching & Sizing Rules ---');
+
+  const page3Src = fs.readFileSync(path.join(__dirname, '../src/preserve/pages/Page3Review.tsx'), 'utf8');
+
+  check(
+    'Page3Review renders manual textarea with rows=6 fallback aligning with shared height',
+    page3Src.includes('rows={6}') &&
+      page3Src.includes('className="p-area p-odia-area"'),
+    'Page3Review must render manual textarea with rows=6 fallback'
+  );
+
+  check(
+    'preserve.css defines shared --p-review-box-height variable in :root',
+    cssSrc.includes('--p-review-box-height: 320px;'),
+    'preserve.css must declare shared --p-review-box-height: 320px in :root'
+  );
+
+  check(
+    'preserve.css applies shared height to raw transcript box (.p-odia-scroll-box)',
+    cssSrc.includes('height: var(--p-review-box-height, 320px);') &&
+      cssSrc.includes('.p-odia-scroll-box {') &&
+      cssSrc.includes('max-height: var(--p-review-box-height, 320px);'),
+    'Raw transcript scroll box must use shared --p-review-box-height'
+  );
+
+  check(
+    'preserve.css applies shared height to manual transcript textarea (.p-area.p-odia-area)',
+    cssSrc.includes('.p-area.p-odia-area {') &&
+      cssSrc.includes('height: var(--p-review-box-height, 320px);') &&
+      cssSrc.includes('resize: vertical;') &&
+      cssSrc.includes('overflow-y: auto;'),
+    'Manual transcript textarea must match shared height, maintain vertical resize, and scroll long text'
+  );
+
+  check(
+    'preserve.css scales --p-review-box-height responsively at mobile/tablet breakpoints',
+    cssSrc.includes('@media (max-width: 960px)') &&
+      cssSrc.includes('--p-review-box-height: 260px;'),
+    'Shared review box height must scale to 260px at max-width 960px'
+  );
+
   if (failed) {
-    console.error('\n❌ Audio privacy confirmation and Step C UI tests failed.');
+    console.error('\n❌ Audio privacy confirmation, Step C UI, and Review Box Height tests failed.');
     process.exit(1);
   } else {
-    console.log('\n✅ All Audio Privacy Confirmation Dialog & Step C UI Text tests passed successfully.');
+    console.log('\n✅ All Audio Privacy Confirmation Dialog, Step C UI Text & Review Textarea Height tests passed successfully.');
   }
 })();

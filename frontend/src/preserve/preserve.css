@@ -25,6 +25,7 @@
   --v-font-body: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
   --v-font-odia: 'Noto Sans Oriya', 'Manrope', sans-serif;
   --v-gutter: clamp(16px, 4.4vw, 84px);
+  --p-review-box-height: 320px;
 }
 
 .preserve-experience {
@@ -512,6 +513,11 @@
   font-family: var(--v-font-odia);
   font-size: clamp(20px, 2.1vw, 24px);
   line-height: 2.15;
+  height: var(--p-review-box-height, 320px);
+  min-height: 200px;
+  resize: vertical;
+  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 .p-counter {
@@ -1490,6 +1496,9 @@ pre.p-prov-json {
 }
 
 @media (max-width: 960px) {
+  :root {
+    --p-review-box-height: 260px;
+  }
   .p-grid-two {
     grid-template-columns: 1fr;
     gap: 20px;
@@ -1941,13 +1950,16 @@ pre.p-prov-json {
 }
 
 .p-odia-scroll-box {
-  max-height: 320px;
+  height: var(--p-review-box-height, 320px);
+  max-height: var(--p-review-box-height, 320px);
+  min-height: 200px;
   overflow-y: auto;
   padding: 14px 16px;
   background: var(--v-field);
   border: 1px solid var(--v-line);
   border-radius: 4px;
   flex: 1;
+  box-sizing: border-box;
 }
 
 .p-model-footer {
