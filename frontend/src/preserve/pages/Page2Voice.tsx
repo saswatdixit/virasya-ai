@@ -25,6 +25,8 @@ export default function Page2Voice() {
     transcriptionError,
     selectedLanguage,
     setSelectedLanguage,
+    transcriptionStyle,
+    setTranscriptionStyle,
     isLanguageConfirmed,
     setIsLanguageConfirmed,
     retryTranscription,
@@ -489,6 +491,110 @@ export default function Page2Voice() {
                       </select>
                     </div>
 
+                    {/* Output Style Selection (Gnani format: verbatim | transcribe) */}
+                    <div className="p-style-section" style={{ marginTop: 14, marginBottom: 14 }}>
+                      <label id="output-style-label" className="p-style-label">
+                        Output Style
+                      </label>
+                      <p className="p-style-helper">
+                        Choose how English words and numbers are written.
+                      </p>
+
+                      <div
+                        role="radiogroup"
+                        aria-labelledby="output-style-label"
+                        className="p-style-grid"
+                      >
+                        {/* Verbatim Option Card */}
+                        <div
+                          role="radio"
+                          aria-checked={transcriptionStyle === "verbatim"}
+                          tabIndex={0}
+                          className={`p-style-card ${transcriptionStyle === "verbatim" ? "is-selected" : ""}`}
+                          onClick={() => setTranscriptionStyle("verbatim")}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setTranscriptionStyle("verbatim");
+                            }
+                          }}
+                        >
+                          <div className="p-style-card-header">
+                            <div className="p-style-radio-indicator">
+                              <input
+                                type="radio"
+                                id="style-verbatim"
+                                name="transcription-style"
+                                value="verbatim"
+                                checked={transcriptionStyle === "verbatim"}
+                                onChange={() => setTranscriptionStyle("verbatim")}
+                                tabIndex={-1}
+                                aria-hidden="true"
+                              />
+                              <strong className="p-style-title">Verbatim</strong>
+                            </div>
+                            {transcriptionStyle === "verbatim" && (
+                              <span className="p-style-check" aria-hidden="true">✓</span>
+                            )}
+                          </div>
+
+                          <p className="p-style-desc">
+                            Writes the transcript word for word in the selected language, entirely in its native script. English words and numbers are spelled out the way they’re spoken.
+                          </p>
+
+                          <div className="p-style-example" aria-label="Verbatim style example: Mera account balance baarah hazaar paanch sau rupaye hai in Devanagari script">
+                            <span className="p-style-eg">e.g.</span> मेरा{" "}
+                            <span className="p-hl-blue">अकाउंट बैलेंस</span>{" "}
+                            <span className="p-hl-amber">बारह हज़ार पाँच सौ रुपये</span> है
+                          </div>
+                        </div>
+
+                        {/* Transcribe Option Card */}
+                        <div
+                          role="radio"
+                          aria-checked={transcriptionStyle === "transcribe"}
+                          tabIndex={0}
+                          className={`p-style-card ${transcriptionStyle === "transcribe" ? "is-selected" : ""}`}
+                          onClick={() => setTranscriptionStyle("transcribe")}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setTranscriptionStyle("transcribe");
+                            }
+                          }}
+                        >
+                          <div className="p-style-card-header">
+                            <div className="p-style-radio-indicator">
+                              <input
+                                type="radio"
+                                id="style-transcribe"
+                                name="transcription-style"
+                                value="transcribe"
+                                checked={transcriptionStyle === "transcribe"}
+                                onChange={() => setTranscriptionStyle("transcribe")}
+                                tabIndex={-1}
+                                aria-hidden="true"
+                              />
+                              <strong className="p-style-title">Transcribe</strong>
+                            </div>
+                            {transcriptionStyle === "transcribe" && (
+                              <span className="p-style-check" aria-hidden="true">✓</span>
+                            )}
+                          </div>
+
+                          <p className="p-style-desc">
+                            Writes the transcript in the native script of the selected language, with numbers, dates and amounts as digits and symbols.
+                          </p>
+
+                          <div className="p-style-example" aria-label="Transcribe style example: Mera account balance ₹12,500 hai with digits and English loanwords">
+                            <span className="p-style-eg">e.g.</span> मेरा{" "}
+                            <span className="p-hl-blue">account balance</span>{" "}
+                            <span className="p-hl-amber">₹12,500</span> है
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                     <div
                       style={{
                         display: "flex",
@@ -777,6 +883,12 @@ export default function Page2Voice() {
             <div className="p-side-item">
               <span className="p-side-label">Language</span>
               <span className="p-side-val">{state.form.language || "Odia"}</span>
+            </div>
+            <div className="p-side-item">
+              <span className="p-side-label">Output Style</span>
+              <span className="p-side-val" style={{ textTransform: "capitalize" }}>
+                {transcriptionStyle === "transcribe" ? "Transcribe (Digits & Symbols)" : "Verbatim (Native Script)"}
+              </span>
             </div>
 
             {hasWritten && (

@@ -110,9 +110,9 @@ check(
 );
 
 check(
-  'Constructs native FormData with language_code, format: verbatim, and audio_file',
+  'Constructs native FormData with language_code, dynamic format (verbatim/transcribe), and audio_file',
   transcribeCode.includes('formData.append("language_code"') &&
-  transcribeCode.includes('formData.append("format", "verbatim")') &&
+  (transcribeCode.includes('formData.append("format", requestedFormat)') || transcribeCode.includes('formData.append("format", "verbatim")')) &&
   transcribeCode.includes('formData.append("audio_file"'),
   'Must build standard multipart FormData for Gnani'
 );

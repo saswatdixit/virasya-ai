@@ -40,6 +40,7 @@ export interface StoryPayload {
     storage_path?: string;
     bucket?: string;
   } | null;
+  transcription_style?: "verbatim" | "transcribe";
   raw_transcripts?: Record<string, any>;
   workingDraft?: string;
   vocabulary?: Array<{
@@ -409,6 +410,9 @@ export interface TranscribeResponse {
   transcript?: string;
   raw_text?: string;
   inference_seconds?: number;
+  duration_seconds?: number;
+  format?: string;
+  transcription_style?: string;
   language?: string;
   language_code?: string;
   requested_language?: string;
@@ -519,7 +523,8 @@ export async function transcribeAudioOnBackend(
   language: string = "hi-IN",
   storyId?: string,
   signal?: AbortSignal,
-  storagePath?: string
+  storagePath?: string,
+  format: "verbatim" | "transcribe" = "verbatim"
 ): Promise<TranscribeResponse> {
   const supabase = getSupabase();
   if (supabase && isSupabaseConfigured()) {
@@ -530,6 +535,8 @@ export async function transcribeAudioOnBackend(
         language,
         language_code: language,
         story_id: storyId,
+        format,
+        transcription_style: format,
       },
     });
 
@@ -565,6 +572,8 @@ export async function transcribeAudioOnBackend(
           language,
           language_code: language,
           story_id: storyId,
+          format,
+          transcription_style: format,
         }),
         signal,
       });

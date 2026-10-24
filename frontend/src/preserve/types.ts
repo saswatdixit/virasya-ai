@@ -22,6 +22,8 @@ export interface AudioItem {
   bucket?: string;
 }
 
+export type TranscriptionStyle = "verbatim" | "transcribe";
+
 export interface ModelTranscript {
   status: 'idle' | 'processing' | 'done' | 'error';
   p: number;
@@ -31,6 +33,8 @@ export interface ModelTranscript {
   language?: string;
   requestedLanguage?: string;
   providerLanguage?: string;
+  transcriptionStyle?: TranscriptionStyle;
+  format?: string;
   inferenceSeconds?: number;
   durationSeconds?: number;
   error?: string | null;
@@ -81,6 +85,7 @@ export interface PreserveState {
   skipped: Record<number, boolean>;
   form: StoryForm;
   audio: AudioItem | null;
+  transcriptionStyle?: TranscriptionStyle;
   tx: {
     forAudio: string;
     gnani?: ModelTranscript;

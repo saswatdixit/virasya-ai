@@ -16,6 +16,7 @@ import type {
   VocabularyEntry,
   TranscriptDraftSnapshot,
   ModelTranscript,
+  TranscriptionStyle,
 } from "../types";
 import {
   INITIAL_SAMPLE_STORY,
@@ -65,6 +66,7 @@ const INITIAL_STATE: PreserveState = {
     email: "",
   },
   audio: null,
+  transcriptionStyle: "verbatim",
   tx: {
     forAudio: "",
     gnani: { status: "idle", p: 0, text: "", model: "Gnani Prisma STT v2.5", provider: "Gnani.ai" },
@@ -116,6 +118,8 @@ interface PreserveContextType {
   transcriptionError: string | null;
   selectedLanguage: string;
   setSelectedLanguage: (lang: string) => void;
+  transcriptionStyle: TranscriptionStyle;
+  setTranscriptionStyle: (style: TranscriptionStyle) => void;
   isLanguageConfirmed: boolean;
   setIsLanguageConfirmed: (confirmed: boolean) => void;
   clearTranscriptionError: () => void;
@@ -336,6 +340,10 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
   const [selectedLanguage, setSelectedLanguage] = useState<string>("hi-IN");
   const [isLanguageConfirmed, setIsLanguageConfirmed] = useState<boolean>(false);
 
+  const setTranscriptionStyle = useCallback((style: TranscriptionStyle) => {
+    setState((s) => ({ ...s, transcriptionStyle: style }));
+  }, []);
+
   const [audioFile, setAudioFileState] = useState<File | Blob | null>(null);
   const audioFileRef = useRef<File | Blob | null>(null);
 
@@ -429,7 +437,15 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        const res = await transcribeAudioOnBackend(audioName, lang, stateRef.current.storyId, undefined, storagePath);
+        const currentStyle = stateRef.current.transcriptionStyle || "verbatim";
+        const res = await transcribeAudioOnBackend(
+          audioName,
+          lang,
+          stateRef.current.storyId,
+          undefined,
+          storagePath,
+          currentStyle
+        );
 
         const gResult = res.results?.gnani || res.results?.vaani;
         const transcriptText = (
@@ -453,6 +469,8 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
           language: res.language || lang,
           requestedLanguage: res.requested_language || (lang.startsWith("hi") ? "Hindi" : lang),
           providerLanguage: res.provider_language || "hi",
+          transcriptionStyle: currentStyle,
+          format: currentStyle,
           inferenceSeconds: gResult?.inference_seconds || res.inference_seconds,
           durationSeconds: gResult?.duration_seconds,
           error: errorMsg,
@@ -1058,7 +1076,10 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
 
   const resumeFromSaved = useCallback(() => {
     if (resumeDraft) {
-      setState({ ...resumeDraft });
+      setState({
+        ...resumeDraft,
+        transcriptionStyle: resumeDraft.transcriptionStyle || "verbatim",
+      });
       setResumeDraft(null);
       const target = STEP_DEFINITIONS.find((s) => s.step === resumeDraft.stage);
       if (target && window.location.pathname !== target.route) {
@@ -1093,6 +1114,8 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         transcriptionError,
         selectedLanguage,
         setSelectedLanguage,
+        transcriptionStyle: state.transcriptionStyle || "verbatim",
+        setTranscriptionStyle,
         isLanguageConfirmed,
         setIsLanguageConfirmed,
         clearTranscriptionError,
