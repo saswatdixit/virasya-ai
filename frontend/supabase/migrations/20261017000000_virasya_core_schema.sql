@@ -622,13 +622,12 @@ DROP POLICY IF EXISTS "Allow public access to recordings" ON storage.objects;
 DROP POLICY IF EXISTS "Public Access" ON storage.objects;
 
 -- Create or update the private storage bucket
--- Configured for 5 MiB (5,242,880 bytes) per audio recording object
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
     'story-recordings-private',
     'story-recordings-private',
     false,
-    5242880, -- 5 MiB (5,242,880 bytes)
+    52428800, -- 50 MB
     ARRAY['audio/wav', 'audio/ogg', 'audio/mpeg', 'audio/webm', 'audio/flac', 'audio/aac', 'audio/mp4', 'audio/x-m4a']
 )
 ON CONFLICT (id) DO UPDATE SET

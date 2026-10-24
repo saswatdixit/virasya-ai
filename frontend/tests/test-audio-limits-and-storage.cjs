@@ -95,15 +95,23 @@ console.log("=== Virasya Audio Storage, Limits & Playback Test Suite ===\n");
   console.log("   ✓ Adapters correctly map and restore canonical storage_path and bucket.");
 
   // ---------------------------------------------------------------------------
-  // 5. Supabase Core Schema Migration (SEC-02: 5 MiB Bucket Limit)
+  // 5. Supabase Storage Migration (SEC-02: 5 MiB Bucket Limit Reconciliation)
   // ---------------------------------------------------------------------------
-  console.log("\n5. Verifying Supabase core schema migration bucket limit (SEC-02)...");
-  const migrationPath = path.resolve(__dirname, "../../supabase/migrations/20261017000000_virasya_core_schema.sql");
-  const migrationContent = fs.readFileSync(migrationPath, "utf8");
+  console.log("\n5. Verifying Supabase storage migrations & 5 MiB limit (SEC-02)...");
+  const historicalMigrationPath = path.resolve(__dirname, "../../supabase/migrations/20261017000000_virasya_core_schema.sql");
+  const forwardMigrationPath = path.resolve(__dirname, "../../supabase/migrations/20261024010000_reconcile_audio_bucket_limit.sql");
 
-  assert(migrationContent.includes("5242880, -- 5 MiB"), "Storage bucket migration must configure 5,242,880 bytes limit");
-  assert(!migrationContent.includes("52428800"), "Old 50 MB (52428800) limit must not be present in migration");
-  console.log("   ✓ Migration 20261017000000_virasya_core_schema.sql correctly sets 5 MiB (5,242,880 bytes).");
+  const historicalContent = fs.readFileSync(historicalMigrationPath, "utf8");
+  const forwardContent = fs.readFileSync(forwardMigrationPath, "utf8");
+
+  // Historical migration retains immutable 50 MB initial definition
+  assert(historicalContent.includes("52428800, -- 50 MB"), "Historical 20261017 migration must remain immutable with 50 MB");
+  assert(!historicalContent.includes("5242880,"), "Historical 20261017 migration must not be altered for 5 MiB limit");
+
+  // Forward migration reconciles to 5 MiB (5,242,880 bytes)
+  assert(forwardContent.includes("5242880 -- 5 MiB"), "Forward migration 20261024010000 must reconcile bucket to 5,242,880 bytes");
+  assert(forwardContent.includes("UPDATE storage.buckets"), "Forward migration must update storage.buckets");
+  console.log("   ✓ Historical migration is preserved immutable; forward migration 20261024010000 sets 5 MiB.");
 
   // ---------------------------------------------------------------------------
   // 6. Supabase Edge Function: preserve-story Security & Exact Object Verification
