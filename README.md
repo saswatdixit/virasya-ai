@@ -1,6 +1,6 @@
 # Virasya — Cultural Heritage Archival Platform
 
-Virasya is a cultural legacy and oral storytelling preservation platform. It pairs a cinematic React 19 frontend with a Python transcription backend powered by Gnani.ai's Prisma STT v2.5 engine and Supabase cloud infrastructure (Auth, Private Storage, and Edge Functions).
+Virasya is a cultural legacy and oral storytelling preservation platform. It pairs a cinematic React 19 frontend hosted on Vercel with a serverless backend powered by Supabase (Auth, Private Storage, Postgres, and Edge Functions) and Gnani.ai's Prisma STT v3 REST API.
 
 ---
 
@@ -12,23 +12,23 @@ Virasya is a cultural legacy and oral storytelling preservation platform. It pai
 │  (Vite, Three.js, TailwindCSS)  │    URL: https://virasya-ai-gnani.vercel.app
 └───────────────┬─────────────────┘
                 │
-                ├─────────────────────────────────────────┐
-                ▼                                         ▼
-┌─────────────────────────────────┐     ┌─────────────────────────────────┐
-│     Python Backend Container    │     │      Supabase Cloud Platform    │
-│  (ThreadingHTTPServer, Gnani)   │     │   (Auth, Postgres, Edge Fns,    │
-│  Mounted: /api/upload, /api/... │     │    Private Storage Bucket)      │
-└───────────────┬─────────────────┘     └─────────────────────────────────┘
-                │                                         ▲
-                ▼                                         │
-┌─────────────────────────────────┐                       │
-│    Gnani.ai Prisma STT REST     │                       │
-│  Endpoint: api.vachana.ai       │                       │
-│  Header: X-API-Key-ID           │                       │
-│  Max Duration: 60s, Max: 5 MiB  │                       │
-└─────────────────────────────────┘                       │
-                │                                         │
-                └─────────────────────────────────────────┘
+                │ Direct SDK & Edge Function Calls (JWT Authenticated)
+                ▼
+┌─────────────────────────────────┐
+│      Supabase Cloud Platform    │ ── Project: ahjmjgiyljjkxvwoubdr
+│  - Auth (Magic Link + PKCE)     │
+│  - Storage (5 MiB Private)      │
+│  - Postgres (stories/vocab)     │
+│  - Edge Functions (Deno/TS):    │
+│    • transcribe-audio ──────────┼───────────────┐
+│    • preserve-story             │               │ Native HTTPS
+│    • get-story-audio            │               ▼
+└─────────────────────────────────┘     ┌─────────────────────────────────┐
+                                        │    Gnani.ai Prisma STT REST     │
+                                        │  Endpoint: api.vachana.ai/stt/v3│
+                                        │  Header: X-API-Key-ID (Secret)  │
+                                        │  Max Duration: 60s, Max: 5 MiB  │
+                                        └─────────────────────────────────┘
 ```
 
 ### Core Components
@@ -37,21 +37,20 @@ Virasya is a cultural legacy and oral storytelling preservation platform. It pai
    - React 19, TypeScript, Vite, Tailwind CSS, Three.js 3D manuscript hero, and interactive 36-region SVG India map.
    - 6-step preservation workflow: Voice Recording & Upload → Dual ASR Transcription → Human Review & Editorial Correction → Cultural Vocabulary Annotation → Truthful Punctuation & Provenance Review → Final Archival Sealing.
    - Hosted on Vercel with direct client-side routing (`vercel.json` SPA rewrites).
-   - **Production API Guard:** In production builds, `VITE_API_BASE_URL` is required to route requests to the hosted Python backend. If missing, the app displays a clear configuration alert (`Backend Not Configured`) rather than silently sending requests to Vercel's relative `/api` path. In local development (`npm run dev`), relative `/api` paths are proxied to `http://127.0.0.1:5000`.
+   - Direct integration with Supabase client SDK: uploads audio directly to private cloud storage, invokes server-side Edge Functions for transcription and story sealing, and directly queries public stories for Explore.
+   - Zero dependency on Python hosting in production. In local development (`npm run dev`), optional local Python workbench endpoints are proxied if active.
 
-2. **Backend API (`virasya-ai/`)**
-   - Python `>=3.11` service powered by standard library `http.server.ThreadingHTTPServer` (`virasya_ai.web.server:main`).
-   - Concurrency limiter (`_TRANSCRIPTION_SEMAPHORE`) prevents CPU/memory exhaustion under load.
-   - Authenticated audio upload (`/api/upload`) with strict per-user scratch directory isolation (`data/input/<user_id>/<filename>`).
-   - Gnani.ai Prisma speech-to-text integration (`/api/transcribe`) supporting Indic languages (`hi-IN`, `bn-IN`, `kn-IN`, `ta-IN`, `te-IN`, `mr-IN`, `gu-IN`, `pa-IN`, `ml-IN`, `or-IN` fallback).
-   - Healthcheck endpoint (`/api/health`) returning operational status and audio limits.
-
-3. **Supabase Cloud (`supabase/`)**
+2. **Supabase Cloud (`supabase/`)**
    - **Authentication:** Passwordless email magic link authentication with PKCE exchange.
-   - **Private Storage:** `story-recordings-private` bucket (5 MiB strict upload limit, RLS enabled).
-   - **Edge Functions:**
+   - **Private Storage:** `story-recordings-private` bucket (5 MiB strict upload limit, RLS enabled, author path `{user_id}/{filename}`).
+   - **Edge Functions (Deno / TypeScript):**
+     - `transcribe-audio`: Authenticates caller via JWT, validates canonical storage path ownership, downloads private recording, enforces container duration (<= 60.0s) & file size (<= 5 MiB) via `audio-validator.ts`, and proxies multipart request securely to Gnani.ai (`https://api.vachana.ai/stt/v3`) using `GNANI_API_KEY` secret.
      - `preserve-story`: Validates story metadata, downloads exact private audio object from Supabase Storage, decodes container frames (<= 60.0s), and seals record into `public.stories`.
      - `get-story-audio`: Issues short-lived authorized playback tickets for public and author-owned private recordings.
+
+3. **Local Python Workbench (`virasya-ai/`)**
+   - Python `>=3.11` service available for offline acoustic analysis, experimental model benchmarking, and local mock testing.
+   - Not required for production deployment on Vercel and Supabase.
 
 ---
 
@@ -135,7 +134,7 @@ Before going live with the frontend and backend, verify these settings in the Su
 
 ## Test Suites & Quality Assurance
 
-### Frontend Verification (12 Test Suites)
+### Frontend Verification (13 Test Suites)
 ```bash
 cd frontend
 npm test
@@ -152,6 +151,15 @@ npm test
 - `test-audio-limits-and-storage.cjs`: 16 behavioral security tests (5 MiB & 60s boundaries).
 - `test-magic-link-auth.cjs`: 13 magic-link & callback checks.
 - `test-production-api-routing.cjs`: Production API routing and missing VITE_API_BASE_URL guard.
+- `test-transcribe-audio-edge.cjs`: 17 security checks for `transcribe-audio` Edge Function.
+
+### Supabase Edge Functions Deployment
+```bash
+# Deploy all Edge Functions to production Supabase project (ahjmjgiyljjkxvwoubdr)
+npx supabase functions deploy transcribe-audio --project-ref ahjmjgiyljjkxvwoubdr
+npx supabase functions deploy preserve-story --project-ref ahjmjgiyljjkxvwoubdr
+npx supabase functions deploy get-story-audio --project-ref ahjmjgiyljjkxvwoubdr
+```
 
 ### Frontend Production Build
 ```bash

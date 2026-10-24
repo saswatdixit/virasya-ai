@@ -58,7 +58,6 @@ console.log("=== Virasya Audio Storage, Limits & Playback Test Suite ===\n");
 
   // Decoupled upload
   assert(voiceContent.includes("uploadAudioToPrivateBucket(file"), "Must call uploadAudioToPrivateBucket directly without depending on Flask");
-  assert(voiceContent.includes("isBackendConfigured()"), "Flask sync must be optional and non-blocking");
   assert(voiceContent.includes("setAudio("), "Must retain binary File in context memory");
   console.log("   ✓ Page2Voice.tsx enforces 60s auto-stop, 5 MiB limit, duration metadata check, and decoupled upload.");
 

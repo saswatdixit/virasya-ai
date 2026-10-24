@@ -412,8 +412,24 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         },
       }));
 
+      let storagePath = currentAudio?.storage_path;
+      if (!storagePath && user?.id && audioFileRef.current) {
+        try {
+          const uploadRes = await uploadAudioToPrivateBucket(audioFileRef.current, audioName, user.id);
+          if (uploadRes.path) {
+            storagePath = uploadRes.path;
+            setState((s) => ({
+              ...s,
+              audio: s.audio ? { ...s.audio, storage_path: storagePath } : s.audio,
+            }));
+          }
+        } catch (uploadErr) {
+          console.warn("[Storage] On-demand upload notice:", uploadErr);
+        }
+      }
+
       try {
-        const res = await transcribeAudioOnBackend(audioName, lang, stateRef.current.storyId);
+        const res = await transcribeAudioOnBackend(audioName, lang, stateRef.current.storyId, undefined, storagePath);
 
         const gResult = res.results?.gnani || res.results?.vaani;
         const transcriptText = (
@@ -534,6 +550,12 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
 
     if (!isLanguageConfirmed) {
       setTranscriptionError("Please confirm the audio recording language (Hindi) before transcribing.");
+      return;
+    }
+
+    if (isSupabaseConfigured() && !user) {
+      setTranscriptionError("Please sign in with your email to transcribe audio recordings with Gnani AI.");
+      openAuthModal();
       return;
     }
 
@@ -996,15 +1018,6 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
       // Execute real database persistence to Supabase public.stories
       const res = await preserveStoryToSupabase(payload as any, user.id);
 
-      // If local workbench backend is also reachable, sync to local output directory as well
-      if (isBackendConfigured()) {
-        try {
-          await preserveStoryOnBackend(storyId, payload);
-        } catch (backendErr) {
-          console.warn("Local backend sync notice:", backendErr);
-        }
-      }
-
       setState((s) => ({
         ...s,
         provenanceId: res.provenance_id,
@@ -1015,7 +1028,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
       return res;
     }
 
-    // 2. If Supabase is not configured, check if local Flask backend is configured
+    // 2. If Supabase is not configured, check if local fallback is configured
     if (isBackendConfigured()) {
       const res = await preserveStoryOnBackend(storyId, payload);
       setState((s) => ({

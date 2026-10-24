@@ -125,15 +125,17 @@ check(
 );
 
 check(
-  'api.ts uploadAudioToBackend includes clear configuration error for missing VITE_API_BASE_URL in production',
-  apiSrc.includes('Configuration Error: VITE_API_BASE_URL is missing in this production environment. Audio upload cannot be routed'),
-  'uploadAudioToBackend must display clear configuration error'
+  'api.ts uploadAudioToBackend handles unconfigured environment and routes to private storage',
+  apiSrc.includes('uploadAudioToPrivateBucket') &&
+  apiSrc.includes('Supabase is not configured in this environment'),
+  'uploadAudioToBackend must upload to Supabase private bucket and guard unconfigured state'
 );
 
 check(
-  'api.ts transcribeAudioOnBackend includes clear configuration error for missing VITE_API_BASE_URL in production',
-  apiSrc.includes('Configuration Error: VITE_API_BASE_URL is missing in this production deployment. Speech-to-text transcription cannot be routed'),
-  'transcribeAudioOnBackend must display clear configuration error'
+  'api.ts transcribeAudioOnBackend invokes transcribe-audio Edge Function via Supabase client',
+  apiSrc.includes('transcribe-audio') &&
+  apiSrc.includes('supabase.functions.invoke'),
+  'transcribeAudioOnBackend must invoke Supabase Edge Function transcribe-audio'
 );
 
 check(
@@ -150,12 +152,12 @@ check(
   'No backend URL should be invented or hardcoded in api.ts'
 );
 
-// 5. BackendStatusBanner includes configuration error alert
+// 5. BackendStatusBanner includes offline preview status
 check(
-  'BackendStatusBanner displays "Backend Not Configured" and "VITE_API_BASE_URL is not set" when unconfigured',
-  bannerSrc.includes('Backend Not Configured') &&
-  bannerSrc.includes('VITE_API_BASE_URL is not set'),
-  'BackendStatusBanner must inform user of missing VITE_API_BASE_URL configuration'
+  'BackendStatusBanner displays "Offline Preview" and explains unconfigured state',
+  bannerSrc.includes('Offline Preview') &&
+  bannerSrc.includes('Supabase credentials are not configured in this environment'),
+  'BackendStatusBanner must inform user of offline preview mode when credentials missing'
 );
 
 console.log('\n======================================================');

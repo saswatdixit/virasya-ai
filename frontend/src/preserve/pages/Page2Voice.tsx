@@ -4,7 +4,6 @@ import { useAuth } from "../../auth";
 import { uploadAudioToPrivateBucket, isSupabaseConfigured } from "../../supabase";
 import { formatTime } from "../utils";
 import AudioPlayer from "../components/AudioPlayer";
-import { uploadAudioToBackend, isBackendConfigured } from "../api";
 import { LANGUAGE_OPTIONS } from "../types";
 import {
   MAX_AUDIO_DURATION_SECONDS,
@@ -220,15 +219,6 @@ export default function Page2Voice() {
           }
         }
 
-        // Asynchronous background sync to local workbench (if configured, never blocking)
-        if (isBackendConfigured()) {
-          try {
-            await uploadAudioToBackend(file);
-          } catch (backendErr) {
-            console.warn("[Backend Sync] Local workbench notice:", backendErr);
-          }
-        }
-
         setReplacing(false);
         setRecState("idle");
         setUploading(false);
@@ -354,15 +344,6 @@ export default function Page2Voice() {
           }
         } catch (cloudErr) {
           console.warn("[Cloud Storage] Private audio upload exception:", cloudErr);
-        }
-      }
-
-      // Asynchronous background sync to local workbench (if configured, never blocking)
-      if (isBackendConfigured()) {
-        try {
-          await uploadAudioToBackend(file);
-        } catch (backendErr) {
-          console.warn("[Backend Sync] Local workbench notice:", backendErr);
         }
       }
 

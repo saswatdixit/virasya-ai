@@ -37,10 +37,10 @@ export default function BackendStatusBanner() {
       >
         <div className="p-banner-offline-in">
           <div className="p-banner-offline-left">
-            <span className="p-banner-badge">Backend Not Configured</span>
+            <span className="p-banner-badge">Offline Preview</span>
             <div className="p-banner-text">
               <span>
-                <strong>VITE_API_BASE_URL is not set:</strong> The Python speech transcription and storage backend is not connected. In this preview mode, you can test the 6-step workflow with sample heritage content.
+                Supabase credentials are not configured in this environment. In this offline preview mode, you can test the 6-step workflow with sample heritage content.
               </span>
             </div>
           </div>
