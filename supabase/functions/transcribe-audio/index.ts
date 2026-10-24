@@ -231,6 +231,7 @@ Deno.serve(async (req: Request) => {
     // 7. Atomic Rate Limiting & Quota Consumption (VIR-SEC-004)
     // Enforces maximum 10 transcription requests per 10 minutes per authenticated user.
     // Serialized with PostgreSQL transactional advisory lock to prevent race conditions.
+    // Strict Fail-Closed: Gnani API is called ONLY IF the database quota explicitly returns allowed === true.
     const maxRequests = 10;
     const windowSeconds = 600;
     try {
@@ -244,28 +245,54 @@ Deno.serve(async (req: Request) => {
       );
 
       if (quotaError) {
-        console.warn("[Quota] Rate limit check notice:", quotaError.message);
-      } else if (quotaResult && quotaResult.allowed === false) {
+        console.error("[Quota] Rate limit RPC error:", quotaError.message);
         return new Response(
           JSON.stringify({
-            error: `Transcription rate limit exceeded. You have reached the limit of ${maxRequests} requests per ${windowSeconds / 60} minutes. Please try again later.`,
-            code: "RATE_LIMIT_EXCEEDED",
-            current_count: quotaResult.current_count,
-            max_limit: quotaResult.max_limit,
-            retry_after: windowSeconds,
+            error: "Unable to verify transcription quota. Transcription halted to protect provider limits.",
+            code: "QUOTA_VERIFICATION_FAILED",
           }),
-          {
-            status: 429,
-            headers: {
-              ...corsHeaders,
-              "Content-Type": "application/json",
-              "Retry-After": String(windowSeconds),
-            },
-          }
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-    } catch (quotaErr) {
-      console.warn("[Quota] Rate limit RPC exception:", quotaErr);
+
+      if (!quotaResult || typeof quotaResult !== "object" || quotaResult.allowed !== true) {
+        if (quotaResult && quotaResult.allowed === false) {
+          return new Response(
+            JSON.stringify({
+              error: `Transcription rate limit exceeded. You have reached the limit of ${maxRequests} requests per ${windowSeconds / 60} minutes. Please try again later.`,
+              code: "RATE_LIMIT_EXCEEDED",
+              current_count: quotaResult.current_count,
+              max_limit: quotaResult.max_limit,
+              retry_after: windowSeconds,
+            }),
+            {
+              status: 429,
+              headers: {
+                ...corsHeaders,
+                "Content-Type": "application/json",
+                "Retry-After": String(windowSeconds),
+              },
+            }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            error: "Invalid quota response from database. Transcription halted.",
+            code: "INVALID_QUOTA_RESPONSE",
+          }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    } catch (quotaErr: any) {
+      console.error("[Quota] Rate limit exception:", quotaErr);
+      return new Response(
+        JSON.stringify({
+          error: "Transcription quota check encountered an unexpected error. Transcription halted.",
+          code: "QUOTA_CHECK_EXCEPTION",
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     // 8. Verify GNANI_API_KEY secret

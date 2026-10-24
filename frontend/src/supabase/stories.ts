@@ -161,8 +161,7 @@ export async function preserveStoryToSupabase(
 const EXPLORE_PUBLIC_COLUMNS =
   "id, title, carrier, relationship, place, roots, category, language, period, written_text, final_text, story, status, visibility, audio_public_playback, provenance_id, provenance_hash, preserved_at, created_at, updated_at, audio, vocabulary";
 
-const EXPLORE_DETAIL_COLUMNS =
-  "id, title, carrier, relationship, place, roots, category, language, period, written_text, final_text, story, status, visibility, audio_public_playback, provenance_id, provenance_hash, preserved_at, created_at, updated_at, audio, vocabulary, raw_transcripts";
+const EXPLORE_DETAIL_COLUMNS = EXPLORE_PUBLIC_COLUMNS;
 
 /**
  * Queries Supabase public.stories for preserved public stories.
@@ -305,7 +304,7 @@ export async function fetchExploreStoryDetailFromSupabase(
       vocabulary: Array.isArray(data.vocabulary) ? (data.vocabulary as any) : [],
       final_text: data.final_text || data.written_text || data.story || "",
       audio: safeAudio,
-      raw_transcripts: data.raw_transcripts as any,
+      raw_transcripts: undefined,
     };
   } catch {
     return null;

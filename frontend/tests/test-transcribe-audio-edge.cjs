@@ -147,7 +147,24 @@ check(
   'Must return structured client-safe error without leaking secrets'
 );
 
-// 6. Response Formatting
+// 6. Fail-Closed Rate Limiting Invariants
+check(
+  'Enforces atomic database rate limiting via check_and_consume_transcription_quota',
+  transcribeCode.includes('check_and_consume_transcription_quota') &&
+  transcribeCode.includes('status: 429') &&
+  transcribeCode.includes('Retry-After'),
+  'Must call rate limit RPC and enforce HTTP 429 on quota exhaustion'
+);
+
+check(
+  'Strict Fail-Closed: Halts execution with HTTP 500 on quota RPC errors or exceptions without calling Gnani API',
+  transcribeCode.includes('QUOTA_VERIFICATION_FAILED') &&
+  transcribeCode.includes('INVALID_QUOTA_RESPONSE') &&
+  transcribeCode.includes('QUOTA_CHECK_EXCEPTION'),
+  'Quota check must fail closed: never proceed to Gnani API if quota check fails'
+);
+
+// 7. Response Formatting
 check(
   'Returns standardized TranscribeResponse compatible with Virasya frontend',
   transcribeCode.includes('status: "success"') &&
@@ -158,7 +175,7 @@ check(
   'Must return response structure with dual-model compatibility'
 );
 
-// 7. Frontend Integration
+// 8. Frontend Integration
 check(
   'frontend api.ts invokes transcribe-audio Edge Function via Supabase client',
   apiCode.includes('.functions.invoke') &&

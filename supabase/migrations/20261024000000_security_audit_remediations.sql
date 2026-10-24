@@ -133,7 +133,6 @@ SELECT
     created_at,
     updated_at,
     vocabulary,
-    raw_transcripts,
     -- If public audio playback was consented to, provide sanitized playback info (omitting private storage_path)
     CASE 
         WHEN audio IS NOT NULL AND audio_public_playback = true THEN
@@ -149,7 +148,12 @@ SELECT
 FROM public.stories
 WHERE status = 'preserved' AND visibility = 'public';
 
+-- Direct least-privilege boundary:
+-- Anonymous clients cannot directly query public.stories (must use public.explore_stories)
+REVOKE SELECT ON public.stories FROM anon;
+
 -- Grant access on explore view to anonymous and authenticated users
+REVOKE ALL ON public.explore_stories FROM PUBLIC;
 GRANT SELECT ON public.explore_stories TO anon, authenticated;
 
 

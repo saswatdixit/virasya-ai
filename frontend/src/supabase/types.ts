@@ -320,7 +320,6 @@ export interface Database {
           created_at: string;
           updated_at: string;
           vocabulary: Json;
-          raw_transcripts: DbRawTranscripts;
           audio: DbAudioMetadata | null;
         };
       };
