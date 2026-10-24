@@ -221,18 +221,24 @@ export function initThreeScene() {
     function applyMotion(value) {
       reduced = value;
       document.documentElement.classList.toggle("motion-reduced", value);
-      $("#motion-button").textContent = value
-        ? "Resume motion"
-        : "Pause motion";
-      $("#motion-button").setAttribute("aria-pressed", value);
+      const motionBtn = $("#motion-button");
+      if (motionBtn) {
+        motionBtn.textContent = value
+          ? "Resume motion"
+          : "Pause motion";
+        motionBtn.setAttribute("aria-pressed", value);
+      }
       dirty = renderDirty = true;
       resizeScene();
     }
-    $("#motion-button").addEventListener("click", () => applyMotion(!reduced));
+    $("#motion-button")?.addEventListener("click", () => applyMotion(!reduced));
     if (reduced) {
       document.documentElement.classList.add("motion-reduced");
-      $("#motion-button").textContent = "Resume motion";
-      $("#motion-button").setAttribute("aria-pressed", "true");
+      const motionBtn = $("#motion-button");
+      if (motionBtn) {
+        motionBtn.textContent = "Resume motion";
+        motionBtn.setAttribute("aria-pressed", "true");
+      }
     }
     function setExploded(value) {
       manualOpen = value;

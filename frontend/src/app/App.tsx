@@ -105,6 +105,60 @@ function AppContent() {
     return () => window.removeEventListener("popstate", handleLocationChange);
   }, []);
 
+  // Universal internal SPA navigation handler for links across the app
+  useEffect(() => {
+    const handleLinkClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+        return;
+      }
+      const anchor = (e.target as HTMLElement).closest("a");
+      if (!anchor) return;
+      const href = anchor.getAttribute("href");
+      if (!href) return;
+
+      // Allow in-page hash anchor navigation (e.g. #faq, #get-started) to behave natively
+      if (href.startsWith("#")) {
+        return;
+      }
+
+      // External protocol checks
+      if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("mailto:") || href.startsWith("tel:")) {
+        if (!anchor.href.startsWith(window.location.origin)) {
+          return;
+        }
+      }
+
+      if (anchor.target === "_blank" || anchor.hasAttribute("download")) {
+        return;
+      }
+
+      try {
+        const targetUrl = new URL(anchor.href, window.location.origin);
+        if (targetUrl.origin === window.location.origin) {
+          e.preventDefault();
+          const cleanPath = targetUrl.pathname.replace(/\/+$/, "") || "/";
+          if (cleanPath !== currentPath) {
+            window.history.pushState(null, "", targetUrl.pathname + targetUrl.search + targetUrl.hash);
+            setCurrentPath(cleanPath);
+            window.scrollTo({ top: 0, behavior: "instant" });
+          } else if (targetUrl.hash) {
+            const targetEl = document.querySelector(targetUrl.hash);
+            if (targetEl) {
+              targetEl.scrollIntoView({ behavior: "smooth" });
+            }
+          } else {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }
+        }
+      } catch {
+        // Fall back to native browser navigation
+      }
+    };
+
+    document.addEventListener("click", handleLinkClick);
+    return () => document.removeEventListener("click", handleLinkClick);
+  }, [currentPath]);
+
   const isLoginOrProfileRoute =
     currentPath === "/login" || currentPath === "/profile" || currentPath === "/signup";
 

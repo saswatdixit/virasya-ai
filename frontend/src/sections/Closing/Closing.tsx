@@ -1,4 +1,4 @@
-import { PreserveStoryIcon, ComingSoonBadge } from "../../components/shared/Icons";
+import { PreserveStoryIcon } from "../../components/shared/Icons";
 
 export default function Closing() {
   return (
@@ -35,12 +35,8 @@ export default function Closing() {
             <p> Made With Love & Care </p>
             <div className="footer-top-links">
               <a href="/explore">Explore</a>
-              <a href="/culture-hosts">
-                Culture Hosts <ComingSoonBadge text="Soon" compact />
-              </a>
-              <a href="/private-vault">
-                Private Vault <ComingSoonBadge text="Soon" compact />
-              </a>
+              <a href="/culture-hosts">Culture Hosts</a>
+              <a href="/private-vault">Private Vault</a>
               <a href="#faq">Good questions</a>
             </div>
           </div>
@@ -54,12 +50,7 @@ export default function Closing() {
           <div className="footer-baseline">
             <span>© 2026 VIRASYA. MADE FOR A LITTLE MORE.</span>
             <span>
-              <button id="privacy-button">About this preview</button> &nbsp; ·
-              &nbsp;{" "}
-              <button id="motion-button" aria-pressed={false}>
-                Pause motion
-              </button>{" "}
-              &nbsp; · &nbsp; <a href="/">BACK TO TOP ↑</a>
+              <a href="/">BACK TO TOP ↑</a>
             </span>
           </div>
         </footer>
