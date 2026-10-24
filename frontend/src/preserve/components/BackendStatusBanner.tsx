@@ -37,10 +37,10 @@ export default function BackendStatusBanner() {
       >
         <div className="p-banner-offline-in">
           <div className="p-banner-offline-left">
-            <span className="p-banner-badge">Frontend Preview</span>
+            <span className="p-banner-badge">Backend Not Configured</span>
             <div className="p-banner-text">
               <span>
-                Speech models &amp; permanent database are not connected to this static preview. You can navigate the complete flow, test editing, and load sample heritage content.
+                <strong>VITE_API_BASE_URL is not set:</strong> The Python speech transcription and storage backend is not connected. In this preview mode, you can test the 6-step workflow with sample heritage content.
               </span>
             </div>
           </div>

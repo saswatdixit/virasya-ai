@@ -131,6 +131,25 @@ export function getApiBase(): string {
 }
 
 /**
+ * Resolves an API endpoint against the configured backend base URL.
+ * In production, throws a clear Configuration Error if VITE_API_BASE_URL is missing,
+ * preventing silent fallback to relative /api on Vercel.
+ * In local development, returns relative /api path (proxied by Vite dev server to 127.0.0.1:5000).
+ */
+export function resolveApiUrl(path: string): string {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  if (isLocalDev()) {
+    return `${RAW_API_BASE || ""}${cleanPath}`;
+  }
+  if (!isBackendConfigured()) {
+    throw new Error(
+      `Configuration Error: Cannot route '${cleanPath}'. VITE_API_BASE_URL is missing in this production deployment. Set VITE_API_BASE_URL in your hosting environment settings.`
+    );
+  }
+  return `${getApiBase()}${cleanPath}`;
+}
+
+/**
  * Safely retrieves current Supabase session access token for protected ASR backend calls.
  * Never throws, never logs tokens, and handles missing or expired sessions gracefully.
  */
@@ -157,6 +176,15 @@ export async function fetchAuthenticatedAudioBlob(audioUrl: string): Promise<str
   if (audioUrl.startsWith("blob:") || audioUrl.startsWith("data:")) {
     return audioUrl;
   }
+
+  if (!audioUrl.startsWith("http://") && !audioUrl.startsWith("https://")) {
+    if (!isBackendConfigured()) {
+      throw new Error(
+        "Configuration Error: VITE_API_BASE_URL is missing in this production environment. Cannot fetch audio recording from relative path."
+      );
+    }
+  }
+
   const base = getApiBase();
   const targetUrl = audioUrl.startsWith("http://") || audioUrl.startsWith("https://")
     ? audioUrl
@@ -205,7 +233,11 @@ export async function saveStoryToBackend(story: StoryPayload): Promise<{ status:
 
 export async function getStoryFromBackend(storyId: string): Promise<StoryPayload> {
   if (!isBackendConfigured()) {
-    throw new Error("Backend not configured. Story cannot be retrieved from remote server.");
+    throw new Error(
+      isLocalDev()
+        ? "Backend not configured. Story cannot be retrieved from remote server."
+        : "Configuration Error: VITE_API_BASE_URL is missing in this production environment. Cannot retrieve story from remote server."
+    );
   }
   const base = getApiBase();
   const authHeaders = await getAuthHeaders();
@@ -241,7 +273,11 @@ export async function listStoriesFromBackend(): Promise<StoryPayload[]> {
 
 export async function preserveStoryOnBackend(storyId: string, payload: Partial<StoryPayload>): Promise<PreserveResponse> {
   if (!isBackendConfigured()) {
-    throw new Error("Permanent sovereign preservation requires the Virasya AI backend server. Running in preview mode.");
+    throw new Error(
+      isLocalDev()
+        ? "Permanent sovereign preservation requires the Virasya AI backend server. Running in preview mode."
+        : "Configuration Error: VITE_API_BASE_URL is missing in this production environment. Sovereign preservation cannot be routed to relative /api."
+    );
   }
   const base = getApiBase();
   const authHeaders = await getAuthHeaders();
@@ -265,7 +301,9 @@ export async function preserveStoryOnBackend(storyId: string, payload: Partial<S
 export async function uploadAudioToBackend(file: File): Promise<AudioUploadResponse> {
   if (!isBackendConfigured()) {
     throw new Error(
-      "Backend audio storage is not connected in this frontend preview. Audio can still be recorded or played back locally in your browser."
+      isLocalDev()
+        ? "Backend audio storage is not connected in this frontend preview. Audio can still be recorded or played back locally in your browser."
+        : "Configuration Error: VITE_API_BASE_URL is missing in this production environment. Audio upload cannot be routed to relative /api."
     );
   }
 
@@ -444,7 +482,9 @@ export async function checkBackendHealth(): Promise<{
     return {
       online: false,
       configured: false,
-      error: "Frontend preview mode: Backend AI models are not connected.",
+      error: isLocalDev()
+        ? "Frontend preview mode: Local backend AI models are not connected."
+        : "Configuration Error: VITE_API_BASE_URL is missing in this production deployment. Python backend API requests cannot be routed to relative /api.",
     };
   }
 
@@ -534,7 +574,9 @@ export async function transcribeAudioOnBackend(
 ): Promise<TranscribeResponse> {
   if (!isBackendConfigured()) {
     throw new Error(
-      "Speech-to-text transcription with Gnani Prisma requires the Virasya AI backend. You can load a sample transcript to preview the review workflow."
+      isLocalDev()
+        ? "Speech-to-text transcription with Gnani Prisma requires the Virasya AI backend. You can load a sample transcript to preview the review workflow."
+        : "Configuration Error: VITE_API_BASE_URL is missing in this production deployment. Speech-to-text transcription cannot be routed to relative /api."
     );
   }
 
