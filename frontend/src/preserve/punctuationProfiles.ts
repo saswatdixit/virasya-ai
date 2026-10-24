@@ -37,6 +37,8 @@ export interface PunctuationProfile {
     name: string;
     marks: PunctuationMarkItem[];
   }[];
+  isFallback?: boolean;
+  recommendationNotes?: string;
 }
 
 export interface PunctuationMetrics {
@@ -245,6 +247,10 @@ function buildCategoryGroups(): {
 
 /**
  * Standard Odia Punctuation Profile
+ *
+ * Odia orthography: Purna Virama / Danda (।) is the universal sentence terminator.
+ * Double Danda (॥) is traditional for stanzas or narrative conclusions.
+ * Comma (,), question mark (?), exclamation (!), quotes, and em dash are standard.
  */
 export const ODIA_PROFILE: PunctuationProfile = {
   languageKey: "Odia",
@@ -253,19 +259,24 @@ export const ODIA_PROFILE: PunctuationProfile = {
   fontFamily: "'Noto Serif Odia', 'Anek Odia', serif",
   primaryMarks: [
     PUNCTUATION_MARKS.danda,
-    PUNCTUATION_MARKS.doubleDanda,
     PUNCTUATION_MARKS.comma,
     PUNCTUATION_MARKS.question,
     PUNCTUATION_MARKS.doubleQuotes,
-    PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.doubleDanda,
+    PUNCTUATION_MARKS.singleQuotes,
     PUNCTUATION_MARKS.emDash,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Odia orthography: Danda (।) for sentence stops; quotes and commas for oral pauses",
 };
 
 /**
  * Standard Hindi / Devanagari Punctuation Profile
+ *
+ * Hindi Devanagari orthography: Purna Virama (।) is the standard sentence stop.
+ * Western punctuation marks (?, !, quotes, commas, colons) are standard in modern Hindi prose.
+ * Double Danda (॥) is used for verses, chaupais, or section conclusions.
  */
 export const HINDI_PROFILE: PunctuationProfile = {
   languageKey: "Hindi",
@@ -274,19 +285,23 @@ export const HINDI_PROFILE: PunctuationProfile = {
   fontFamily: "'Noto Serif Devanagari', 'Noto Sans Devanagari', 'Mangal', serif",
   primaryMarks: [
     PUNCTUATION_MARKS.danda,
-    PUNCTUATION_MARKS.doubleDanda,
     PUNCTUATION_MARKS.comma,
     PUNCTUATION_MARKS.question,
     PUNCTUATION_MARKS.doubleQuotes,
-    PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.colon,
+    PUNCTUATION_MARKS.doubleDanda,
     PUNCTUATION_MARKS.emDash,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Devanagari orthography: Purna Virama (।) for sentence stops; quotes and commas for oral pauses",
 };
 
 /**
  * Bengali Punctuation Profile
+ *
+ * Bengali orthography: Daari (।) is the universal sentence stop.
+ * Western comma, semicolon, question mark, exclamation, quotes, and em dash are standard.
  */
 export const BENGALI_PROFILE: PunctuationProfile = {
   languageKey: "Bengali",
@@ -295,19 +310,23 @@ export const BENGALI_PROFILE: PunctuationProfile = {
   fontFamily: "'Noto Serif Bengali', 'Noto Sans Bengali', serif",
   primaryMarks: [
     PUNCTUATION_MARKS.danda,
-    PUNCTUATION_MARKS.doubleDanda,
     PUNCTUATION_MARKS.comma,
     PUNCTUATION_MARKS.question,
     PUNCTUATION_MARKS.doubleQuotes,
-    PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.colon,
     PUNCTUATION_MARKS.emDash,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Eastern Nagari orthography: Daari (।) for sentence stops; commas and semicolons for clauses",
 };
 
 /**
  * Gujarati Punctuation Profile
+ *
+ * Modern Gujarati prose overwhelmingly uses the Period (.) as the sentence stop.
+ * Danda (।) is historic or verse-only.
  */
 export const GUJARATI_PROFILE: PunctuationProfile = {
   languageKey: "Gujarati",
@@ -316,18 +335,23 @@ export const GUJARATI_PROFILE: PunctuationProfile = {
   fontFamily: "'Noto Serif Gujarati', 'Noto Sans Gujarati', serif",
   primaryMarks: [
     PUNCTUATION_MARKS.period,
-    PUNCTUATION_MARKS.danda,
     PUNCTUATION_MARKS.comma,
     PUNCTUATION_MARKS.question,
     PUNCTUATION_MARKS.doubleQuotes,
     PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.colon,
     PUNCTUATION_MARKS.emDash,
+    PUNCTUATION_MARKS.hyphen,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Modern Gujarati orthography: Period (.) for sentence stops; colons and commas for clauses",
 };
 
 /**
  * Marathi Punctuation Profile
+ *
+ * Modern standard Marathi prose (standardized by Maharashtra Sahitya Parishad) uses the
+ * Period (.) for sentence stops. Danda (।) is reserved for poetry, Abhangas, and Sanskrit verse.
  */
 export const MARATHI_PROFILE: PunctuationProfile = {
   languageKey: "Marathi",
@@ -335,20 +359,23 @@ export const MARATHI_PROFILE: PunctuationProfile = {
   scriptName: "Devanagari script",
   fontFamily: "'Noto Serif Devanagari', 'Noto Sans Devanagari', serif",
   primaryMarks: [
-    PUNCTUATION_MARKS.danda,
-    PUNCTUATION_MARKS.doubleDanda,
+    PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.comma,
     PUNCTUATION_MARKS.question,
     PUNCTUATION_MARKS.doubleQuotes,
-    PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.semicolon,
     PUNCTUATION_MARKS.emDash,
+    PUNCTUATION_MARKS.danda,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Modern Marathi orthography: Period (.) for sentence stops; Danda (।) for traditional verses",
 };
 
 /**
  * Punjabi Punctuation Profile
+ *
+ * Gurmukhi prose uses Danda (Dandi ।) and Period (.) as sentence stops.
  */
 export const PUNJABI_PROFILE: PunctuationProfile = {
   languageKey: "Punjabi",
@@ -357,18 +384,22 @@ export const PUNJABI_PROFILE: PunctuationProfile = {
   fontFamily: "'Noto Serif Gurmukhi', 'Noto Sans Gurmukhi', serif",
   primaryMarks: [
     PUNCTUATION_MARKS.danda,
-    PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.question,
     PUNCTUATION_MARKS.doubleQuotes,
     PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.colon,
     PUNCTUATION_MARKS.emDash,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Gurmukhi orthography: Danda (।) and Period (.) for sentence stops",
 };
 
 /**
  * Tamil Punctuation Profile
+ *
+ * Standard Tamil prose uses Period (.) exclusively for sentence stops (Danda is not native to Tamil).
  */
 export const TAMIL_PROFILE: PunctuationProfile = {
   languageKey: "Tamil",
@@ -379,17 +410,20 @@ export const TAMIL_PROFILE: PunctuationProfile = {
     PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.comma,
     PUNCTUATION_MARKS.question,
-    PUNCTUATION_MARKS.doubleQuotes,
     PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.singleQuotes,
     PUNCTUATION_MARKS.semicolon,
-    PUNCTUATION_MARKS.danda,
-    PUNCTUATION_MARKS.emDash,
+    PUNCTUATION_MARKS.colon,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Tamil orthography: Period (.) for sentence stops; quotes and pauses for spoken narrative",
 };
 
 /**
  * Telugu Punctuation Profile
+ *
+ * Standard Telugu prose uses Period (.) exclusively for sentence stops.
  */
 export const TELUGU_PROFILE: PunctuationProfile = {
   languageKey: "Telugu",
@@ -400,17 +434,20 @@ export const TELUGU_PROFILE: PunctuationProfile = {
     PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.comma,
     PUNCTUATION_MARKS.question,
-    PUNCTUATION_MARKS.doubleQuotes,
     PUNCTUATION_MARKS.exclamation,
-    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.doubleQuotes,
     PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.colon,
     PUNCTUATION_MARKS.emDash,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Telugu orthography: Period (.) for sentence stops; quotes and commas for clauses",
 };
 
 /**
  * Kannada Punctuation Profile
+ *
+ * Standard Kannada prose uses Period (.) exclusively for sentence stops.
  */
 export const KANNADA_PROFILE: PunctuationProfile = {
   languageKey: "Kannada",
@@ -421,17 +458,20 @@ export const KANNADA_PROFILE: PunctuationProfile = {
     PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.comma,
     PUNCTUATION_MARKS.question,
-    PUNCTUATION_MARKS.doubleQuotes,
     PUNCTUATION_MARKS.exclamation,
-    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.doubleQuotes,
     PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.colon,
     PUNCTUATION_MARKS.emDash,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Kannada orthography: Period (.) for sentence stops; quotes and pauses for clauses",
 };
 
 /**
  * Malayalam Punctuation Profile
+ *
+ * Standard Malayalam prose uses Period (.) exclusively for sentence stops.
  */
 export const MALAYALAM_PROFILE: PunctuationProfile = {
   languageKey: "Malayalam",
@@ -442,21 +482,45 @@ export const MALAYALAM_PROFILE: PunctuationProfile = {
     PUNCTUATION_MARKS.period,
     PUNCTUATION_MARKS.comma,
     PUNCTUATION_MARKS.question,
-    PUNCTUATION_MARKS.doubleQuotes,
     PUNCTUATION_MARKS.exclamation,
-    PUNCTUATION_MARKS.danda,
+    PUNCTUATION_MARKS.doubleQuotes,
     PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.colon,
     PUNCTUATION_MARKS.emDash,
   ],
   availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Malayalam orthography: Period (.) for sentence stops; quotes and commas for pauses",
 };
 
 /**
- * Universal & English Punctuation Profile
+ * English (India) Punctuation Profile
+ */
+export const ENGLISH_PROFILE: PunctuationProfile = {
+  languageKey: "English",
+  displayName: "English (India)",
+  scriptName: "Latin script",
+  fontFamily: "'Noto Serif', 'Georgia', 'Times New Roman', serif",
+  primaryMarks: [
+    PUNCTUATION_MARKS.period,
+    PUNCTUATION_MARKS.comma,
+    PUNCTUATION_MARKS.question,
+    PUNCTUATION_MARKS.exclamation,
+    PUNCTUATION_MARKS.doubleQuotes,
+    PUNCTUATION_MARKS.singleQuotes,
+    PUNCTUATION_MARKS.semicolon,
+    PUNCTUATION_MARKS.colon,
+    PUNCTUATION_MARKS.emDash,
+  ],
+  availableGroups: buildCategoryGroups(),
+  recommendationNotes: "Standard English typography: Period (.) for sentence stops; quotes and dashes for dialogue",
+};
+
+/**
+ * Universal & Fallback Punctuation Profile
  */
 export const UNIVERSAL_PROFILE: PunctuationProfile = {
   languageKey: "Universal",
-  displayName: "Universal / English",
+  displayName: "Universal / General",
   scriptName: "Multilingual",
   fontFamily: "'Noto Serif', 'Georgia', serif",
   primaryMarks: [
@@ -471,58 +535,118 @@ export const UNIVERSAL_PROFILE: PunctuationProfile = {
     PUNCTUATION_MARKS.parentheses,
   ],
   availableGroups: buildCategoryGroups(),
+  isFallback: true,
+  recommendationNotes: "Universal punctuation recommendation",
 };
 
 /**
  * Resolves the appropriate punctuation profile based on the story language.
+ * Supports BCP-47 codes (e.g. "hi-IN", "mr-IN", "ta-IN", "or-IN"),
+ * full language names, common dialects, and unknown language fallbacks.
  */
 export function getPunctuationProfile(language?: string | null): PunctuationProfile {
   if (!language) return UNIVERSAL_PROFILE;
-  const lang = language.trim().toLowerCase();
+  const raw = language.trim();
+  if (!raw) return UNIVERSAL_PROFILE;
+  const lang = raw.toLowerCase().replace(/_/g, "-");
 
-  if (lang.includes("odia") || lang.includes("oriya") || lang.includes("sambalpuri") || lang.includes("koshali")) {
-    return ODIA_PROFILE;
-  }
-  if (lang.includes("hindi") || lang.includes("bhojpuri") || lang.includes("maithili") || lang.includes("sanskrit")) {
-    return HINDI_PROFILE;
-  }
-  if (lang.includes("marathi") || lang.includes("konkani")) {
+  // Marathi (Devanagari, Period primary)
+  if (
+    lang === "mr" ||
+    lang.startsWith("mr-") ||
+    lang.includes("marathi") ||
+    lang.includes("konkani")
+  ) {
     return MARATHI_PROFILE;
   }
-  if (lang.includes("bengali") || lang.includes("bangla") || lang.includes("assamese")) {
-    return BENGALI_PROFILE;
-  }
-  if (lang.includes("gujarati")) {
-    return GUJARATI_PROFILE;
-  }
-  if (lang.includes("punjabi") || lang.includes("gurmukhi")) {
-    return PUNJABI_PROFILE;
-  }
-  if (lang.includes("tamil")) {
-    return TAMIL_PROFILE;
-  }
-  if (lang.includes("telugu")) {
-    return TELUGU_PROFILE;
-  }
-  if (lang.includes("kannada")) {
-    return KANNADA_PROFILE;
-  }
-  if (lang.includes("malayalam")) {
-    return MALAYALAM_PROFILE;
-  }
-  if (lang.includes("english")) {
-    return {
-      ...UNIVERSAL_PROFILE,
-      languageKey: "English",
-      displayName: "English (India)",
-      scriptName: "Latin script",
-    };
+
+  // Hindi and central/northern Devanagari dialects (Danda primary)
+  if (
+    lang === "hi" ||
+    lang.startsWith("hi-") ||
+    lang.includes("hindi") ||
+    lang.includes("bhojpuri") ||
+    lang.includes("maithili") ||
+    lang.includes("sanskrit") ||
+    lang.includes("chhattisgarhi") ||
+    lang.includes("awadhi") ||
+    lang.includes("braj")
+  ) {
+    return HINDI_PROFILE;
   }
 
+  // Odia (Danda primary, Double Danda traditional)
+  if (
+    lang === "or" ||
+    lang.startsWith("or-") ||
+    lang === "od" ||
+    lang.startsWith("od-") ||
+    lang.includes("odia") ||
+    lang.includes("oriya") ||
+    lang.includes("sambalpuri") ||
+    lang.includes("koshali")
+  ) {
+    return ODIA_PROFILE;
+  }
+
+  // Bengali and eastern Nagari scripts
+  if (
+    lang === "bn" ||
+    lang.startsWith("bn-") ||
+    lang.includes("bengali") ||
+    lang.includes("bangla") ||
+    lang.includes("assamese")
+  ) {
+    return BENGALI_PROFILE;
+  }
+
+  // Gujarati
+  if (lang === "gu" || lang.startsWith("gu-") || lang.includes("gujarati")) {
+    return GUJARATI_PROFILE;
+  }
+
+  // Punjabi (Gurmukhi)
+  if (
+    lang === "pa" ||
+    lang.startsWith("pa-") ||
+    lang.includes("punjabi") ||
+    lang.includes("gurmukhi")
+  ) {
+    return PUNJABI_PROFILE;
+  }
+
+  // Tamil (Dravidian, Period primary, no Danda)
+  if (lang === "ta" || lang.startsWith("ta-") || lang.includes("tamil")) {
+    return TAMIL_PROFILE;
+  }
+
+  // Telugu
+  if (lang === "te" || lang.startsWith("te-") || lang.includes("telugu")) {
+    return TELUGU_PROFILE;
+  }
+
+  // Kannada
+  if (lang === "kn" || lang.startsWith("kn-") || lang.includes("kannada")) {
+    return KANNADA_PROFILE;
+  }
+
+  // Malayalam
+  if (lang === "ml" || lang.startsWith("ml-") || lang.includes("malayalam")) {
+    return MALAYALAM_PROFILE;
+  }
+
+  // English
+  if (lang === "en" || lang.startsWith("en-") || lang.includes("english")) {
+    return ENGLISH_PROFILE;
+  }
+
+  // Fallback for custom or unknown languages
   return {
     ...UNIVERSAL_PROFILE,
-    languageKey: language,
-    displayName: `${language} (Universal Profile)`,
+    languageKey: raw,
+    displayName: `${raw} (Universal Profile)`,
+    isFallback: true,
+    recommendationNotes: "Universal punctuation recommendation",
   };
 }
 

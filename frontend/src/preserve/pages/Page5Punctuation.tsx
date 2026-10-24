@@ -15,11 +15,28 @@ export default function Page5Punctuation() {
     state,
     goToStep,
     setManualPunct,
+    selectedLanguage,
   } = usePreserve();
 
-  // Story language from application state (defaults gracefully if unspecified)
-  const storyLanguage = state.form.language || "Hindi";
-  const profile = useMemo(() => getPunctuationProfile(storyLanguage), [storyLanguage]);
+  // Story / transcript language derived dynamically:
+  // 1. If ASR transcribed audio: tx.gnani?.requestedLanguage or tx.gnani?.language
+  // 2. Story setup form: state.form.language
+  // 3. Audio selection setting: selectedLanguage
+  const activeLanguage = useMemo(() => {
+    if (state.ed.loadedFrom === "gnani" || state.ed.loadedFrom === "vaani") {
+      const asrLang = state.tx.gnani?.requestedLanguage || state.tx.gnani?.language;
+      if (asrLang) return asrLang;
+    }
+    return (
+      state.form.language ||
+      state.tx.gnani?.requestedLanguage ||
+      state.tx.gnani?.language ||
+      selectedLanguage ||
+      "Hindi"
+    );
+  }, [state.ed.loadedFrom, state.tx.gnani, state.form.language, selectedLanguage]);
+
+  const profile = useMemo(() => getPunctuationProfile(activeLanguage), [activeLanguage]);
 
   // Initial text: carried forward from manual punctuation, working draft, or step 1 story
   const baseWorkingText = state.ed.text || state.form.story || "";
@@ -223,7 +240,7 @@ export default function Page5Punctuation() {
                     cursor: "pointer",
                   }}
                 >
-                  ★ Recommended for {profile.displayName.split(" ")[0]}
+                  ★ {profile.isFallback || profile.languageKey === "Universal" ? "Recommended" : `Recommended for ${profile.languageKey}`}
                 </button>
                 <button
                   type="button"
@@ -273,30 +290,56 @@ export default function Page5Punctuation() {
               >
                 {/* 1. Recommended Tab */}
                 {activeTab === "recommended" && (
-                  profile.primaryMarks.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className="p-btn p-btn-ghost p-btn-sm"
-                      onClick={() => handleInsertMark(item)}
-                      title={item.title}
-                      aria-label={item.ariaLabel || item.title}
+                  <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <div
                       style={{
-                        fontFamily: item.fontFamily || profile.fontFamily,
-                        fontSize: item.mark.length > 2 ? "13px" : "15px",
-                        minWidth: "36px",
-                        padding: "4px 8px",
-                        background: "#FFFDF9",
-                        border: "1px solid #D8C4A9",
-                        boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        gap: "6px",
+                        paddingBottom: "4px",
+                        borderBottom: "1px dashed #EADCBA",
                       }}
                     >
-                      {item.display}{" "}
-                      <span style={{ fontSize: "10px", marginLeft: "2px", opacity: 0.65, fontWeight: 400 }}>
-                        {item.label}
+                      <span style={{ fontSize: "12px", fontWeight: 700, color: "#8C4F00" }}>
+                        {profile.isFallback || profile.languageKey === "Universal"
+                          ? "General Recommended Punctuation"
+                          : `Recommended for ${profile.languageKey}`}
                       </span>
-                    </button>
-                  ))
+                      {profile.recommendationNotes && (
+                        <span style={{ fontSize: "11px", color: "var(--v-ink-muted, #6B625E)", fontStyle: "italic" }}>
+                          {profile.recommendationNotes}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }}>
+                      {profile.primaryMarks.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="p-btn p-btn-ghost p-btn-sm"
+                          onClick={() => handleInsertMark(item)}
+                          title={item.title}
+                          aria-label={item.ariaLabel || item.title}
+                          style={{
+                            fontFamily: item.fontFamily || profile.fontFamily,
+                            fontSize: item.mark.length > 2 ? "13px" : "15px",
+                            minWidth: "36px",
+                            padding: "4px 8px",
+                            background: "#FFFDF9",
+                            border: "1px solid #D8C4A9",
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
+                          }}
+                        >
+                          {item.display}{" "}
+                          <span style={{ fontSize: "10px", marginLeft: "2px", opacity: 0.65, fontWeight: 400 }}>
+                            {item.label}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
 
                 {/* 2. All Symbols Tab */}
@@ -433,7 +476,7 @@ export default function Page5Punctuation() {
             </div>
             <div className="p-side-item">
               <span className="p-side-label">Language / Dialect</span>
-              <span className="p-side-val">{state.form.language || "Hindi"}</span>
+              <span className="p-side-val">{profile.displayName}</span>
             </div>
 
             {/* Carried Vocabulary Highlights */}

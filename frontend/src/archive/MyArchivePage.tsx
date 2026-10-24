@@ -20,32 +20,55 @@ export default function MyArchivePage() {
   const [resolvingAudio, setResolvingAudio] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const readerDialogRef = useRef<HTMLDialogElement>(null);
+  const audioRequestIdRef = useRef<number>(0);
 
   // Fetch stories on mount or user identity change
   useEffect(() => {
     let active = true;
+    const currentUserId = user?.id;
+
+    // Fix 3: Invalidate pending audio requests and close/clear reader state on logout or account switch
+    audioRequestIdRef.current++;
+    if (readerDialogRef.current && readerDialogRef.current.open) {
+      readerDialogRef.current.close();
+    }
+    setSelectedStory(null);
+    setPlaybackUrl(null);
+    setAudioError(null);
+    setResolvingAudio(false);
+
+    if (!user) {
+      setLoading(false);
+      setStories([]);
+      setError(null);
+      return () => {
+        active = false;
+      };
+    }
+
+    // Fix 2: Immediately clear stale stories when a new user load begins
+    setLoading(true);
+    setError(null);
+    setStories([]);
 
     async function loadUserArchive() {
-      if (!user) {
-        setLoading(false);
-        setStories([]);
-        return;
-      }
-
-      setLoading(true);
-      setError(null);
       try {
         const data = await listStoriesFromBackend();
-        if (active) {
+        // Prevent race condition: ensure response belongs to current active user
+        if (active && user?.id === currentUserId) {
           setStories(data);
         }
       } catch (err: any) {
-        if (active) {
+        if (active && user?.id === currentUserId) {
           console.error("[MyArchive] Failed to load stories:", err);
           setError(err.message || "Failed to load sovereign archive stories.");
+          // Fix 2: Ensure failed request cannot leave previous user's stories visible
+          setStories([]);
         }
       } finally {
-        if (active) setLoading(false);
+        if (active && user?.id === currentUserId) {
+          setLoading(false);
+        }
       }
     }
 
@@ -64,11 +87,15 @@ export default function MyArchivePage() {
 
     if (story.audio) {
       setResolvingAudio(true);
+      const reqId = ++audioRequestIdRef.current;
+      const requestingUserId = user?.id;
+
       getStoryAudioPlaybackUrl(story.id || "", {
         storagePath: story.audio.storage_path,
         fallbackUrl: story.audio.url,
       })
         .then((url) => {
+          if (audioRequestIdRef.current !== reqId || user?.id !== requestingUserId) return;
           if (url) {
             setPlaybackUrl(url);
           } else if (story.audio?.url) {
@@ -78,6 +105,7 @@ export default function MyArchivePage() {
           }
         })
         .catch((err) => {
+          if (audioRequestIdRef.current !== reqId || user?.id !== requestingUserId) return;
           console.warn("[MyArchive] Audio resolution warning:", err);
           if (story.audio?.url) {
             setPlaybackUrl(story.audio.url);
@@ -86,7 +114,9 @@ export default function MyArchivePage() {
           }
         })
         .finally(() => {
-          setResolvingAudio(false);
+          if (audioRequestIdRef.current === reqId && user?.id === requestingUserId) {
+            setResolvingAudio(false);
+          }
         });
     }
 
@@ -96,12 +126,14 @@ export default function MyArchivePage() {
   };
 
   const handleCloseReader = () => {
+    audioRequestIdRef.current++; // Invalidate pending audio request
     if (readerDialogRef.current && readerDialogRef.current.open) {
       readerDialogRef.current.close();
     }
     setSelectedStory(null);
     setPlaybackUrl(null);
     setAudioError(null);
+    setResolvingAudio(false);
   };
 
   // Filter stories

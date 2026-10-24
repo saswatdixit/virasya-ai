@@ -246,6 +246,33 @@ check(
   'DraftBanner must clearly explain un-uploaded audio limitations across devices'
 );
 
+// ---------------------------------------------------------------------------
+// 4. Post-Audit Regression Fixes
+// ---------------------------------------------------------------------------
+check(
+  '[Fix 1] PreserveContext debounced auto-save effect guards both resumeDraft and cloudDraft',
+  preserveContextCode.includes('if (resumeDraft || cloudDraft) return;') &&
+    preserveContextCode.includes('[state, resumeDraft, cloudDraft, activeStorageKey]'),
+  'Must guard auto-save against overwriting while either local or cloud draft is pending'
+);
+
+check(
+  '[Fix 2] MyArchivePage clears stale archive data and guards against async race conditions',
+  myArchiveCode.includes('setStories([]);') &&
+    myArchiveCode.includes('currentUserId') &&
+    myArchiveCode.includes('user?.id === currentUserId'),
+  'Must clear stale stories immediately on load/error and match currentUserId'
+);
+
+check(
+  '[Fix 3] MyArchivePage closes reader, clears playbackUrl, and invalidates audio requests on logout',
+  myArchiveCode.includes('audioRequestIdRef') &&
+    myArchiveCode.includes('setSelectedStory(null)') &&
+    myArchiveCode.includes('setPlaybackUrl(null)') &&
+    myArchiveCode.includes('readerDialogRef.current.close()'),
+  'Must close dialog, clear selectedStory/playbackUrl, and invalidate audio requests'
+);
+
 console.log('\n======================================================');
 if (failed) {
   console.error('VERIFICATION FAILED: Some privacy and archive checks did not pass.');

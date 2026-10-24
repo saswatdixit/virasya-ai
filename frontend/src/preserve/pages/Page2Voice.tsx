@@ -30,6 +30,7 @@ export default function Page2Voice() {
     isLanguageConfirmed,
     setIsLanguageConfirmed,
     retryTranscription,
+    updateForm,
   } = usePreserve();
   const { user } = useAuth();
 
@@ -468,8 +469,13 @@ export default function Page2Voice() {
                         id="audio-language-select"
                         value={selectedLanguage}
                         onChange={(e) => {
-                          setSelectedLanguage(e.target.value);
+                          const langCode = e.target.value;
+                          setSelectedLanguage(langCode);
                           setIsLanguageConfirmed(false);
+                          const matchedLang = LANGUAGE_OPTIONS.find((l) => l.code === langCode);
+                          if (matchedLang) {
+                            updateForm("language", matchedLang.name);
+                          }
                         }}
                         disabled={isTranscribing}
                         style={{

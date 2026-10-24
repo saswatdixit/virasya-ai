@@ -26,6 +26,7 @@ import {
   STORAGE_KEY,
   STORAGE_KEY_GUEST,
   getDraftStorageKey,
+  LANGUAGE_OPTIONS,
 } from "../types";
 
 import {
@@ -401,7 +402,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
 
   // Save draft to localStorage debounced (scoped by user ID)
   useEffect(() => {
-    if (resumeDraft) return; // don't overwrite if waiting to resume
+    if (resumeDraft || cloudDraft) return; // don't overwrite if waiting to resume
     const timer = setTimeout(() => {
       try {
         const safeAudio = state.audio
@@ -425,7 +426,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
       }
     }, 600);
     return () => clearTimeout(timer);
-  }, [state, resumeDraft, activeStorageKey]);
+  }, [state, resumeDraft, cloudDraft, activeStorageKey]);
 
 
 
@@ -496,6 +497,14 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
       ...s,
       form: { ...s.form, [field]: value },
     }));
+    if (field === "language" && value) {
+      const match = LANGUAGE_OPTIONS.find(
+        (opt) => opt.name.toLowerCase() === value.toLowerCase()
+      );
+      if (match) {
+        setSelectedLanguage(match.code);
+      }
+    }
   }, []);
 
   const fillSampleStory = useCallback(() => {
