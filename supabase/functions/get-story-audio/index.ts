@@ -176,7 +176,17 @@ Deno.serve(async (req: Request) => {
     }
 
     let storagePath = typeof audio.storage_path === "string" ? audio.storage_path.trim() : null;
-    const bucket = typeof audio.bucket === "string" ? audio.bucket.trim() : ALLOWED_STORAGE_BUCKET;
+    // Strict bucket restriction: playback tickets can only be generated for story-recordings-private
+    const bucket = ALLOWED_STORAGE_BUCKET;
+    if (audio.bucket && audio.bucket !== ALLOWED_STORAGE_BUCKET) {
+      return new Response(
+        JSON.stringify({
+          error: "Unauthorized storage bucket specified in recording metadata.",
+          code: "INVALID_BUCKET",
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Backward compatibility: If storage_path is not stored directly, extract from legacy signed URL
     if (!storagePath && audio.url && typeof audio.url === "string") {

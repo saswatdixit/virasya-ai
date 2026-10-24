@@ -180,11 +180,11 @@ export async function fetchExploreStoriesFromSupabase(filters?: {
   }
 
   try {
-    let query = supabase
-      .from("stories")
+    // Query public.explore_stories view which enforces least-privilege projection,
+    // redacts storyteller email addresses, and scrubs private audio storage paths (VIR-SEC-003)
+    let query = (supabase as any)
+      .from("explore_stories")
       .select(EXPLORE_PUBLIC_COLUMNS)
-      .eq("status", "preserved")
-      .eq("visibility", "public")
       .order("preserved_at", { ascending: false, nullsFirst: false });
 
     if (filters?.category && filters.category !== "All") {
@@ -207,10 +207,10 @@ export async function fetchExploreStoriesFromSupabase(filters?: {
       return { count: 0, stories: [] };
     }
 
-    let rows = data;
+    let rows: any[] = data;
     const searchTerm = (filters?.search || filters?.q || "").trim().toLowerCase();
     if (searchTerm) {
-      rows = rows.filter((r) => {
+      rows = rows.filter((r: any) => {
         return (
           (r.title && r.title.toLowerCase().includes(searchTerm)) ||
           (r.carrier && r.carrier.toLowerCase().includes(searchTerm)) ||
@@ -266,12 +266,11 @@ export async function fetchExploreStoryDetailFromSupabase(
   }
 
   try {
-    const { data, error } = await supabase
-      .from("stories")
+    // Query public.explore_stories view for detail to enforce strict field projection (VIR-SEC-003)
+    const { data, error } = await (supabase as any)
+      .from("explore_stories")
       .select(EXPLORE_DETAIL_COLUMNS)
       .eq("id", storyId)
-      .eq("status", "preserved")
-      .eq("visibility", "public")
       .single();
 
     if (error || !data) {

@@ -82,7 +82,8 @@ BEGIN
                    NEW.category IS DISTINCT FROM OLD.category OR
                    NEW.relationship IS DISTINCT FROM OLD.relationship OR
                    NEW.raw_transcripts IS DISTINCT FROM OLD.raw_transcripts OR
-                   NEW.punctuation IS DISTINCT FROM OLD.punctuation THEN
+                   NEW.punctuation IS DISTINCT FROM OLD.punctuation OR
+                   NEW.vocabulary IS DISTINCT FROM OLD.vocabulary THEN
                     RAISE EXCEPTION 'Preserved cultural story content and audio are permanently immutable. Only visibility and audio playback permissions may be updated.'
                         USING ERRCODE = '23514';
                 END IF;
@@ -108,7 +109,8 @@ CREATE TRIGGER trigger_enforce_preserved_story_immutability
 
 -- Create a secure view projecting only public-safe fields for Explore browsing.
 -- Excludes personal emails (email) and private storage path locations (audio.storage_path).
-CREATE OR REPLACE VIEW public.explore_stories AS
+CREATE OR REPLACE VIEW public.explore_stories
+WITH (security_barrier = true) AS
 SELECT
     id,
     title,
@@ -130,6 +132,8 @@ SELECT
     preserved_at,
     created_at,
     updated_at,
+    vocabulary,
+    raw_transcripts,
     -- If public audio playback was consented to, provide sanitized playback info (omitting private storage_path)
     CASE 
         WHEN audio IS NOT NULL AND audio_public_playback = true THEN

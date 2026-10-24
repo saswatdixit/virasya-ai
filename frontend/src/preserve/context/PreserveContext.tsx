@@ -214,10 +214,21 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
     prevUserIdRef.current = user?.id;
 
     try {
-      // 1. Check user-scoped draft
+      // 1. If switching from one authenticated user to a different user, or logout:
+      if (prevId !== undefined && prevId !== user?.id) {
+        // Always reset in-memory state so previous user's draft is not shown on screen
+        setState({ ...INITIAL_STATE });
+        setResumeDraft(null);
+        if (!user?.id) {
+          // Logged out: return early after clearing in-memory presentation
+          return;
+        }
+      }
+
+      // 2. Check user-scoped draft
       let raw = localStorage.getItem(activeStorageKey);
 
-      // 2. If guest just signed in, migrate guest draft into their user-scoped storage key
+      // 3. If guest just signed in, migrate guest draft into their user-scoped storage key
       if (!raw && user?.id) {
         const guestRaw =
           localStorage.getItem(STORAGE_KEY_GUEST) ||
@@ -227,16 +238,6 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
           localStorage.setItem(activeStorageKey, guestRaw);
           localStorage.removeItem(STORAGE_KEY_GUEST);
           localStorage.removeItem(STORAGE_KEY);
-        }
-      }
-
-      // 3. If switching from one authenticated user to a different user, or logout:
-      if (prevId !== undefined && prevId !== user?.id) {
-        if (!user?.id) {
-          // Logged out: reset in-memory state so previous user's draft is not shown on screen
-          setState({ ...INITIAL_STATE });
-          setResumeDraft(null);
-          return;
         }
       }
 

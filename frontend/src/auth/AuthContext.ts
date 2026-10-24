@@ -392,12 +392,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const signOut = useCallback(async (): Promise<{ error: AuthError | Error | null }> => {
-    // Purge user-scoped and guest draft keys to prevent cross-session leakage (VIR-SEC-006)
+    // Purge legacy unscoped draft keys to prevent cross-session leakage (VIR-SEC-006)
+    // Note: The user's scoped draft (virasya_story_draft_user_${user.id}) is safely preserved
+    // under their unique account ID for subsequent login. In-memory state is cleared immediately.
     try {
-      if (user?.id) {
-        localStorage.removeItem(`virasya_story_draft_user_${user.id}`);
-      }
-      localStorage.removeItem("virasya_story_draft_guest");
       localStorage.removeItem("virasya_preserve_story_draft_v2");
     } catch {}
     setProfile(null);
