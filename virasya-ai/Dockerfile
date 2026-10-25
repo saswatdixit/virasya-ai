@@ -15,13 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Upgrade pip and install package dependencies
-COPY pyproject.toml .
+# Copy project definition and source tree for package installation
+COPY pyproject.toml README.md ./
+COPY src/ /app/src/
+
+# Upgrade pip and install package
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
-
-# Copy source tree
-COPY src/ /app/src/
 
 # Create ephemeral scratch directories for audio processing
 RUN mkdir -p /app/data/input /app/data/output
@@ -29,6 +29,7 @@ RUN mkdir -p /app/data/input /app/data/output
 # Default production environment configuration
 ENV PYTHONUNBUFFERED=1 \
     VIRASYA_WEB_HOST=0.0.0.0 \
+    VIRASYA_REQUIRE_AUTH=true \
     VIRASYA_DATA_DIR=/app/data
 
 # Default port exposure (can be overridden by cloud platform PORT env variable)

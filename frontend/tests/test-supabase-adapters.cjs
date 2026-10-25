@@ -14,6 +14,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const assert = require("node:assert");
 
 console.log("=== Virasya Supabase Adapters & Data Contract Verification ===\n");
@@ -367,71 +368,116 @@ console.log("=== Virasya Supabase Adapters & Data Contract Verification ===\n");
   console.log("   ✓ Unknown and legacy dual-cased fields preserved into unmapped without silent data loss.");
 
   // ---------------------------------------------------------------------------
-  // 6. Lossless Round-Trip Verification on 20 Real Local Story JSON Files
+  // 6. Lossless Round-Trip Verification on 20 Synthetic Story JSON Files
   // ---------------------------------------------------------------------------
-  console.log("\n6. Testing round-trip fidelity on all real local story files...");
+  console.log("\n6. Testing round-trip fidelity on 20 synthetic story fixtures (isolated tempdir)...");
 
-  const candidateDirs = [
-    path.resolve(__dirname, "../../virasya-ai/data/output/stories"),
-    path.resolve(__dirname, "../virasya-ai/data/output/stories"),
-    path.resolve(__dirname, "../../../virasya-ai/data/output/stories")
-  ];
-  const storiesDir = candidateDirs.find(d => fs.existsSync(d));
-  assert(storiesDir, `Stories directory not found in candidates: ${candidateDirs.join(', ')}`);
+  const realStoriesDir = path.resolve(__dirname, "../../virasya-ai/data/output/stories");
+  const tempFixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "virasya-adapters-synthetic-"));
+  assert.notStrictEqual(
+    path.resolve(tempFixtureDir),
+    realStoriesDir,
+    "Guard violation: test directory must never be the real repository story directory"
+  );
 
-  const storyFiles = fs.readdirSync(storiesDir).filter((f) => f.endsWith(".json"));
-  console.log(`   Found ${storyFiles.length} local story files in ${storiesDir}`);
-  assert(storyFiles.length >= 20, `Expected at least 20 local story files, found ${storyFiles.length}`);
+  try {
+    const storyItems = [];
+    for (let i = 1; i <= 20; i++) {
+      const synId = `synthetic_story_${i}`;
+      const fixtureData = {
+        id: synId,
+        title: `Synthetic Folklore Narrative ${i}`,
+        status: i % 2 === 0 ? "preserved" : "draft",
+        visibility: ["public", "private", "family", "community"][i % 4],
+        carrier: "Storyteller Elder",
+        relationship: "Oral tradition",
+        roots: "Odisha",
+        category: "Folk tales",
+        language: "Odia",
+        period: "Contemporary",
+        email: "teller@virasya.local",
+        writtenText: `Written text for story ${i}`,
+        workingDraft: `Working draft for story ${i}`,
+        final_text: `Final story text ${i}`,
+        audio: {
+          name: `rec_${i}.wav`,
+          storage_path: `user_001/rec_${i}.wav`,
+          bucket: "story-recordings-private",
+          duration: 35.0,
+        },
+        vocabulary: [
+          {
+            id: `v_${i}`,
+            preferred: "ଶବ୍ଦ",
+            heard: "ଶବ୍ଦ",
+            meaning: "Word",
+            language: "Odia",
+          },
+        ],
+        punctuation: {
+          finalText: `Final story text ${i}`,
+        },
+        finalSettings: {
+          visibility: ["public", "private", "family", "community"][i % 4],
+          confirmed: true,
+          permissionConfirmed: true,
+        },
+        created_at: "2026-10-25T00:00:00Z",
+      };
 
-  let verifiedCount = 0;
-  const unmappedFieldSummary = {};
-
-  for (const file of storyFiles) {
-    const filePath = path.join(storiesDir, file);
-    const rawContent = fs.readFileSync(filePath, "utf8");
-    const originalJson = JSON.parse(rawContent);
-
-    // 1. Convert to DB StoryRow
-    const { row, unmapped, hasUnmappedFields } = localStoryJsonToDbRow(originalJson, null);
-
-    // Track unmapped/legacy fields encountered
-    if (hasUnmappedFields) {
-      for (const k of Object.keys(unmapped)) {
-        unmappedFieldSummary[k] = (unmappedFieldSummary[k] || 0) + 1;
-      }
+      const fixtureFile = path.join(tempFixtureDir, `${synId}.json`);
+      fs.writeFileSync(fixtureFile, JSON.stringify(fixtureData, null, 2), "utf8");
+      storyItems.push({ file: `${synId}.json`, json: fixtureData });
     }
 
-    // Verify row invariants
-    assert(row.id, `File ${file}: row.id must not be empty`);
-    assert(
-      row.status === "draft" || row.status === "preserved",
-      `File ${file}: invalid status ${row.status}`
-    );
-    assert(
-      row.visibility === "private" ||
-        row.visibility === "family" ||
-        row.visibility === "community" ||
-        row.visibility === "public",
-      `File ${file}: invalid visibility ${row.visibility}`
-    );
+    assert.strictEqual(storyItems.length, 20, "Must evaluate exactly 20 synthetic fixtures");
 
-    // 2. Reconstruct local JSON
-    const reconstructed = dbRowToLocalStoryJson(row, unmapped);
+    let verifiedCount = 0;
+    const unmappedFieldSummary = {};
 
-    // 3. Verify exact lossless equality against original JSON
-    assert.deepStrictEqual(
-      reconstructed,
-      originalJson,
-      `File ${file}: round-trip reconstruction did not match original JSON exactly!`
-    );
+    for (const { file, json: originalJson } of storyItems) {
+      // 1. Convert to DB StoryRow
+      const { row, unmapped, hasUnmappedFields } = localStoryJsonToDbRow(originalJson, null);
 
-    verifiedCount++;
-  }
+      if (hasUnmappedFields) {
+        for (const k of Object.keys(unmapped)) {
+          unmappedFieldSummary[k] = (unmappedFieldSummary[k] || 0) + 1;
+        }
+      }
 
-  console.log(`   ✓ Successfully verified exact lossless round-trip across ALL ${verifiedCount} local story files (20/20)!`);
-  console.log("\n   Summary of preserved unmapped & legacy duplicate fields across local stories:");
-  for (const [k, count] of Object.entries(unmappedFieldSummary)) {
-    console.log(`     • "${k}": present in ${count} file(s) (preserved)`);
+      assert(row.id, `File ${file}: row.id must not be empty`);
+      assert(
+        row.status === "draft" || row.status === "preserved",
+        `File ${file}: invalid status ${row.status}`
+      );
+      assert(
+        row.visibility === "private" ||
+          row.visibility === "family" ||
+          row.visibility === "community" ||
+          row.visibility === "public",
+        `File ${file}: invalid visibility ${row.visibility}`
+      );
+
+      // 2. Reconstruct local JSON
+      const reconstructed = dbRowToLocalStoryJson(row, unmapped);
+
+      // 3. Verify exact lossless equality against original JSON
+      assert.deepStrictEqual(
+        reconstructed,
+        originalJson,
+        `File ${file}: round-trip reconstruction did not match original JSON exactly!`
+      );
+
+      verifiedCount++;
+    }
+
+    console.log(`   ✓ Successfully verified exact lossless round-trip across ALL ${verifiedCount} synthetic fixtures (20/20)!`);
+    console.log("\n   Summary of preserved unmapped & legacy duplicate fields across synthetic stories:");
+    for (const [k, count] of Object.entries(unmappedFieldSummary)) {
+      console.log(`     • "${k}": present in ${count} file(s) (preserved)`);
+    }
+  } finally {
+    fs.rmSync(tempFixtureDir, { recursive: true, force: true });
   }
 
   console.log("\n=== ALL SUPABASE ADAPTER TESTS PASSED (100%) ===\n");

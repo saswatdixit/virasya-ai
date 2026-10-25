@@ -77,18 +77,29 @@ def _ffmpeg_decode(path: Path) -> tuple[np.ndarray, int]:
             ],
             check=False,
             capture_output=True,
+            timeout=30.0,
         )
     except FileNotFoundError as exc:
         raise UnsupportedFormatError(
             f"Cannot decode {path.suffix} without ffmpeg. Install ffmpeg or "
             "provide WAV, FLAC, or OGG audio."
         ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CorruptAudioError(f"Audio decoding timed out for {path.name}") from exc
 
     if process.returncode != 0:
         detail = process.stderr.decode(errors="ignore")[:200]
         raise CorruptAudioError(
             f"Could not decode {path.name} with ffmpeg: {detail}"
         )
+
+    # Bound maximum decoded audio bytes to 25 MiB (~2 minutes of 48kHz 16-bit stereo)
+    max_decoded_bytes = 25 * 1024 * 1024
+    if len(process.stdout) > max_decoded_bytes:
+        raise AudioTooLongError(
+            f"Decoded audio stream ({len(process.stdout)} bytes) exceeds the maximum allowed size ({max_decoded_bytes} bytes)."
+        )
+
     try:
         data, rate = sf.read(io.BytesIO(process.stdout), always_2d=True, dtype="float32")
     except Exception as exc:
@@ -156,7 +167,7 @@ def load_audio(
     path = _check_audio_path(audio_path)
     try:
         samples, rate = _read_audio(path)
-    except (CorruptAudioError, UnsupportedFormatError, EmptyAudioError):
+    except (AudioTooLongError, CorruptAudioError, UnsupportedFormatError, EmptyAudioError):
         raise
     except Exception as exc:
         raise CorruptAudioError(f"Could not decode audio file: {path.name}") from exc

@@ -7,13 +7,13 @@ name = "virasya_ai"
 version = "0.3.0"
 description = "Hindi audio transcription with the Gnani Prisma v2.5 REST API"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11, <=3.14"
 authors = [{ name = "virasya_ai" }]
 dependencies = [
   "numpy>=1.24",
   "soundfile>=0.12",
   "soxr>=0.3",
-  "requests>=2.32",
+  "requests>=2.33",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +25,9 @@ virasya-web = "virasya_ai.web.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"virasya_ai.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

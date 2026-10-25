@@ -5,7 +5,8 @@ Exposes endpoints for Audio Upload, Gnani Transcription, Story Preservation, and
 """
 from __future__ import annotations
 
-import cgi
+import email
+import email.policy
 import hashlib
 import io
 import json
@@ -17,6 +18,7 @@ import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from virasya_ai.config import (
@@ -62,6 +64,60 @@ ALLOWED_AUDIO_EXTENSIONS = {".wav", ".ogg", ".mp3", ".flac", ".m4a", ".aac", ".w
 
 _MAX_CONCURRENT_TRANSCRIBES = int(os.getenv("VIRASYA_MAX_CONCURRENT_TRANSCRIBES", "3"))
 _TRANSCRIPTION_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_TRANSCRIBES)
+
+
+class MultipartField:
+    """Represents a parsed multipart/form-data field."""
+
+    def __init__(
+        self,
+        name: str,
+        value: bytes,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> None:
+        self.name = name
+        self.value = value
+        self.filename = filename
+        self.content_type = content_type
+        self.file = io.BytesIO(value)
+
+
+class MultipartData:
+    """Container for parsed multipart/form-data fields, replacing deprecated cgi.FieldStorage."""
+
+    def __init__(self) -> None:
+        self._fields: dict[str, list[MultipartField]] = {}
+
+    def add(self, field: MultipartField) -> None:
+        self._fields.setdefault(field.name, []).append(field)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._fields
+
+    def __getitem__(self, key: str) -> MultipartField:
+        items = self._fields.get(key)
+        if not items:
+            raise KeyError(key)
+        return items[0]
+
+    def get(self, key: str, default: Any = None) -> MultipartField | None:
+        items = self._fields.get(key)
+        if not items:
+            return default
+        return items[0]
+
+    def getlist(self, key: str) -> list[MultipartField]:
+        return self._fields.get(key, [])
+
+    def getvalue(self, key: str, default: str = "") -> str:
+        items = self._fields.get(key)
+        if not items:
+            return default
+        try:
+            return items[0].value.decode("utf-8")
+        except UnicodeDecodeError:
+            return default
 
 
 def _resolve_scratch_file(
@@ -221,11 +277,20 @@ class StudioHandler(BaseHTTPRequestHandler):
 
         # 6. List stories
         elif path == "/api/stories":
+            user_id, ok = self._get_authenticated_user_id()
+            if not ok:
+                return
             all_stories = list_stories()
+            require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
+            if require_auth and user_id:
+                all_stories = [s for s in all_stories if s.get("user_id") == user_id]
             self._send_json(all_stories)
 
         # 7. Vocabulary list
         elif path == "/api/vocabulary":
+            user_id, ok = self._get_authenticated_user_id()
+            if not ok:
+                return
             terms = get_all_vocabulary()
             self._send_json(terms)
 
@@ -290,27 +355,42 @@ class StudioHandler(BaseHTTPRequestHandler):
     # Route Implementations
     # -------------------------------------------------------------------------
 
-    def _serve_audio_file(self, raw_filename: str) -> None:
+    def _get_authenticated_user_id(self, *, required: bool = False) -> tuple[str | None, bool]:
+        """Verify authentication token and extract caller user ID.
+
+        Returns:
+            (user_id, True) if authenticated or if authentication is not required.
+            (None, False) if authentication failed and an HTTP 401 response was sent.
+        """
         require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
+        is_required = required or require_auth
         token = self._extract_bearer_token()
-        user_id: str | None = None
+
         if token:
             user_obj = self._verify_supabase_bearer_token(token)
             if user_obj and "id" in user_obj:
-                user_id = str(user_obj["id"])
-            else:
-                self._send_json(
-                    {"error": "Invalid or expired authorization token.", "code": "UNAUTHORIZED"},
-                    HTTPStatus.UNAUTHORIZED,
-                )
-                return
-        elif require_auth:
+                return str(user_obj["id"]), True
             self._send_json(
-                {"error": "Authentication required to access audio files.", "code": "AUTH_REQUIRED"},
+                {"error": "Invalid or expired authorization token.", "code": "UNAUTHORIZED"},
                 HTTPStatus.UNAUTHORIZED,
             )
+            return None, False
+
+        if is_required:
+            self._send_json(
+                {"error": "Authentication required for this operation.", "code": "AUTH_REQUIRED"},
+                HTTPStatus.UNAUTHORIZED,
+            )
+            return None, False
+
+        return None, True
+
+    def _serve_audio_file(self, raw_filename: str) -> None:
+        user_id, ok = self._get_authenticated_user_id()
+        if not ok:
             return
 
+        require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
         file_path = _resolve_scratch_file(user_id, raw_filename, require_auth=require_auth, must_exist=True)
         if file_path is None or not file_path.is_file():
             self._send_json({"error": "Audio file not found or unauthorized."}, HTTPStatus.NOT_FOUND)
@@ -340,25 +420,11 @@ class StudioHandler(BaseHTTPRequestHandler):
         cleanup_stale_scratch_files(INPUT_AUDIO_DIR, max_age_seconds=3600.0)
 
         # Authentication / authorization checks
-        require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
-        token = self._extract_bearer_token()
-        user_id: str | None = None
-        if token:
-            user_obj = self._verify_supabase_bearer_token(token)
-            if user_obj and "id" in user_obj:
-                user_id = str(user_obj["id"])
-            else:
-                self._send_json(
-                    {"error": "Invalid or expired authorization token.", "code": "UNAUTHORIZED"},
-                    HTTPStatus.UNAUTHORIZED,
-                )
-                return
-        elif require_auth:
-            self._send_json(
-                {"error": "Authentication required. Please sign in to upload audio.", "code": "AUTH_REQUIRED"},
-                HTTPStatus.UNAUTHORIZED,
-            )
+        user_id, ok = self._get_authenticated_user_id()
+        if not ok:
             return
+
+        require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
 
         fields = self._multipart_fields()
         file_field = fields["file"] if "file" in fields else fields.get("audio_file")
@@ -435,6 +501,10 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def _handle_transcribe(self) -> None:
         """Handles both JSON transcription (React frontend) and multipart (legacy studio)."""
+        user_id, ok = self._get_authenticated_user_id()
+        if not ok:
+            return
+
         content_type = self.headers.get("Content-Type", "").lower()
 
         if "multipart/form-data" in content_type:
@@ -445,7 +515,23 @@ class StudioHandler(BaseHTTPRequestHandler):
                 raise UploadError("Choose an audio file before transcribing.")
             filename = Path(audio_field.filename).name
             audio_bytes = audio_field.file.read(MAX_UPLOAD_BYTES + 1)
-            result = transcribe_uploaded_audio(audio_bytes, filename, language_code)
+
+            acquired = _TRANSCRIPTION_SEMAPHORE.acquire(blocking=True, timeout=2.0)
+            if not acquired:
+                self._send_json(
+                    {
+                        "error": "Transcription engine is currently at capacity. Please try again shortly.",
+                        "code": "ENGINE_BUSY",
+                    },
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                )
+                return
+
+            try:
+                result = transcribe_uploaded_audio(audio_bytes, filename, language_code)
+            finally:
+                _TRANSCRIPTION_SEMAPHORE.release()
+
             self._send_json({
                 "audio_filename": filename,
                 "language": language_code,
@@ -456,25 +542,6 @@ class StudioHandler(BaseHTTPRequestHandler):
 
         # JSON body expected by React frontend: { filename: "...", model: "both|vaani", story_id: "..." }
         require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
-        token = self._extract_bearer_token()
-        user_id: str | None = None
-        if token:
-            user_obj = self._verify_supabase_bearer_token(token)
-            if user_obj and "id" in user_obj:
-                user_id = str(user_obj["id"])
-            else:
-                self._send_json(
-                    {"error": "Invalid or expired authorization token.", "code": "UNAUTHORIZED"},
-                    HTTPStatus.UNAUTHORIZED,
-                )
-                return
-        elif require_auth:
-            self._send_json(
-                {"error": "Authentication required. Please sign in to transcribe audio.", "code": "AUTH_REQUIRED"},
-                HTTPStatus.UNAUTHORIZED,
-            )
-            return
-
         payload = self._json_body()
         filename = payload.get("filename")
         if not filename or not isinstance(filename, str):
@@ -576,6 +643,9 @@ class StudioHandler(BaseHTTPRequestHandler):
         })
 
     def _handle_save_legacy(self) -> None:
+        user_id, ok = self._get_authenticated_user_id()
+        if not ok:
+            return
         payload = self._json_body()
         required = ("audio_filename", "language", "raw_text", "reviewed_text")
         if any(not isinstance(payload.get(key), str) for key in required):
@@ -594,19 +664,58 @@ class StudioHandler(BaseHTTPRequestHandler):
         self._send_json({"saved": True, "record": record}, HTTPStatus.CREATED)
 
     def _handle_save_story(self) -> None:
+        user_id, ok = self._get_authenticated_user_id()
+        if not ok:
+            return
         story = self._json_body()
-        if not story.get("id"):
+        story_id = story.get("id")
+        if story_id:
+            existing = get_story(story_id)
+            if existing:
+                existing_owner = existing.get("user_id")
+                require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
+                if (require_auth and existing_owner != user_id) or (user_id and existing_owner and existing_owner != user_id):
+                    self._send_json(
+                        {"error": "Forbidden: Cannot modify a story belonging to another user.", "code": "FORBIDDEN"},
+                        HTTPStatus.FORBIDDEN,
+                    )
+                    return
+                if existing.get("status") == "preserved":
+                    self._send_json(
+                        {"error": "Cannot modify a preserved story.", "code": "ALREADY_PRESERVED"},
+                        HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+        else:
             story["id"] = f"story_{int(time.time() * 1000)}"
+
+        if user_id:
+            story["user_id"] = user_id
         if "status" not in story:
             story["status"] = "draft"
         saved = save_story(story)
         self._send_json({"status": "success", "story": saved})
 
     def _handle_get_story(self, story_id: str) -> None:
+        user_id, ok = self._get_authenticated_user_id()
+        if not ok:
+            return
         story = get_story(story_id)
         if not story:
             self._send_json({"error": "Story not found."}, HTTPStatus.NOT_FOUND)
             return
+
+        require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
+        if require_auth:
+            is_owner = bool(user_id and story.get("user_id") == user_id)
+            is_public_preserved = (story.get("status") == "preserved" and story.get("visibility") == "public")
+            if not is_owner and not is_public_preserved:
+                self._send_json(
+                    {"error": "Forbidden: You do not have permission to view this story.", "code": "FORBIDDEN"},
+                    HTTPStatus.FORBIDDEN,
+                )
+                return
+
         self._send_json(story)
 
     def _extract_bearer_token(self) -> str | None:
@@ -642,10 +751,41 @@ class StudioHandler(BaseHTTPRequestHandler):
         return None
 
     def _sync_preserved_story_to_supabase(self, story_dict: dict) -> None:
+        # Direct service-role sync bypasses Edge Function quota validation and provenance sealing.
+        # It is disabled by default to prevent privilege escalation / bypass of the Edge Function.
+        allow_direct_sync = os.getenv("VIRASYA_ALLOW_DIRECT_SERVICE_ROLE_SYNC", "").lower() in ("true", "1")
+        if not allow_direct_sync:
+            return
+
         supabase_url = os.getenv("SUPABASE_URL")
         service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         if not supabase_url or not service_key:
             return
+
+        story_id = story_dict.get("id")
+        user_id = story_dict.get("user_id")
+        if not story_id or not user_id:
+            raise StorageError("Cannot sync story to Supabase without verified story ID and user ID.")
+
+        # Hardened pre-flight: check if story exists remotely before inserting
+        check_url = f"{supabase_url.rstrip('/')}/rest/v1/stories?id=eq.{urllib.parse.quote(str(story_id))}&select=id,user_id,status"
+        check_headers = {
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+        }
+        check_req = urllib.request.Request(check_url, headers=check_headers, method="GET")
+        try:
+            with urllib.request.urlopen(check_req, timeout=5) as check_resp:
+                existing_remote = json.loads(check_resp.read().decode("utf-8"))
+                if existing_remote and len(existing_remote) > 0:
+                    remote_row = existing_remote[0]
+                    if remote_row.get("user_id") != user_id:
+                        raise StorageError("Remote story exists and belongs to a different user.")
+                    if remote_row.get("status") == "preserved":
+                        raise StorageError("Remote story is already preserved and sealed.")
+                    raise StorageError("Remote story already exists; duplicate insertion refused.")
+        except urllib.error.HTTPError as exc:
+            raise StorageError(f"Failed to query remote story state: {exc.code}") from exc
 
         db_row = {
             "id": story_dict.get("id"),
@@ -683,25 +823,37 @@ class StudioHandler(BaseHTTPRequestHandler):
             "Content-Type": "application/json",
             "apikey": service_key,
             "Authorization": f"Bearer {service_key}",
-            "Prefer": "resolution=merge-duplicates",
+            "Prefer": "return=minimal",
         }
         req = urllib.request.Request(url, data=req_data, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=5):
-                pass
-        except Exception:
-            pass
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status not in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.NO_CONTENT):
+                    raise StorageError(f"Supabase returned status {resp.status}")
+        except urllib.error.HTTPError as exc:
+            raise StorageError(f"Failed to sync preserved story to Supabase: {exc.code}") from exc
 
     def _handle_preserve_story(self, story_id: str) -> None:
-        payload = self._json_body()
-        existing = get_story(story_id) or {"id": story_id}
+        user_id, ok = self._get_authenticated_user_id()
+        if not ok:
+            return
 
-        # Check for verified Supabase user via Bearer token (never trust unverified client user_id)
-        token = self._extract_bearer_token()
-        if token:
-            verified_user = self._verify_supabase_bearer_token(token)
-            if verified_user and "id" in verified_user:
-                existing["user_id"] = verified_user["id"]
+        payload = self._json_body()
+        existing = get_story(story_id)
+        if existing:
+            existing_owner = existing.get("user_id")
+            require_auth = os.getenv("VIRASYA_REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
+            if (require_auth and existing_owner != user_id) or (user_id and existing_owner and existing_owner != user_id):
+                self._send_json(
+                    {"error": "Forbidden: Cannot preserve a story belonging to another user.", "code": "FORBIDDEN"},
+                    HTTPStatus.FORBIDDEN,
+                )
+                return
+        else:
+            existing = {"id": story_id}
+
+        if user_id:
+            existing["user_id"] = user_id
 
         existing["status"] = "preserved"
         existing["finalSettings"] = {
@@ -729,7 +881,10 @@ class StudioHandler(BaseHTTPRequestHandler):
         saved = save_story(existing)
 
         # Sync to Supabase if configured (non-blocking)
-        self._sync_preserved_story_to_supabase(saved)
+        try:
+            self._sync_preserved_story_to_supabase(saved)
+        except Exception as exc:
+            print(f"[Supabase Sync Warning] Failed to sync story {story_id}: {exc}")
 
         self._send_json({
             "status": "success",
@@ -847,6 +1002,9 @@ class StudioHandler(BaseHTTPRequestHandler):
         self._send_json({"status": "success", "story": detail})
 
     def _handle_save_vocabulary(self) -> None:
+        user_id, ok = self._get_authenticated_user_id()
+        if not ok:
+            return
         payload = self._json_body()
         words = payload.get("words", [])
         if not isinstance(words, list):
@@ -871,7 +1029,7 @@ class StudioHandler(BaseHTTPRequestHandler):
     # Request Helpers
     # -------------------------------------------------------------------------
 
-    def _multipart_fields(self) -> cgi.FieldStorage:
+    def _multipart_fields(self) -> MultipartData:
         content_type = self.headers.get("Content-Type", "")
         if not content_type.lower().startswith("multipart/form-data"):
             raise UploadError("Transcription requires a multipart audio upload.")
@@ -879,16 +1037,28 @@ class StudioHandler(BaseHTTPRequestHandler):
         if length > MAX_REQUEST_BYTES:
             raise UploadError("The upload is too large.")
         body = self.rfile.read(length)
-        return cgi.FieldStorage(
-            fp=io.BytesIO(body),
-            headers=self.headers,
-            environ={
-                "REQUEST_METHOD": "POST",
-                "CONTENT_TYPE": content_type,
-                "CONTENT_LENGTH": str(length),
-            },
-            keep_blank_values=True,
-        )
+
+        header_bytes = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("latin1")
+        msg = email.message_from_bytes(header_bytes + body, policy=email.policy.default)
+
+        data = MultipartData()
+        for part in msg.iter_parts():
+            name = part.get_param("name", header="content-disposition")
+            if not name:
+                continue
+            filename = part.get_filename()
+            payload = part.get_payload(decode=True)
+            if payload is None:
+                payload = b""
+            data.add(
+                MultipartField(
+                    name=name,
+                    value=payload,
+                    filename=filename,
+                    content_type=part.get_content_type(),
+                )
+            )
+        return data
 
     def _json_body(self) -> dict[str, Any]:
         content_type = self.headers.get("Content-Type", "").lower()
@@ -969,6 +1139,18 @@ def main() -> None:
 
     default_host = "0.0.0.0" if "PORT" in os.environ else "127.0.0.1"
     host = os.getenv("VIRASYA_WEB_HOST", default_host)
+    if not require_auth and host not in ("127.0.0.1", "localhost", "::1"):
+        allow_insecure = os.getenv("VIRASYA_ALLOW_INSECURE_HOST", "").lower() in ("true", "1", "yes")
+        if not allow_insecure:
+            raise SystemExit(
+                f"FATAL SECURITY ERROR: Server is configured to bind to non-loopback host '{host}' "
+                "with VIRASYA_REQUIRE_AUTH disabled. This exposes unprotected endpoints to the network. "
+                "Set VIRASYA_REQUIRE_AUTH=true or explicitly set VIRASYA_ALLOW_INSECURE_HOST=1 to override."
+            )
+        print(
+            f"WARNING: Server is binding to non-loopback host '{host}' with VIRASYA_REQUIRE_AUTH disabled "
+            "(VIRASYA_ALLOW_INSECURE_HOST=1 override active). Anyone on the network can access the API."
+        )
     server = create_server(host, port)
     print(f"Virasya AI Backend running on http://{host}:{port}")
     try:

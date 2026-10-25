@@ -12,6 +12,8 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
+const cp = require("node:child_process");
 
 console.log("=== Virasya Audio Storage, Limits & Playback Test Suite ===\n");
 
@@ -663,6 +665,331 @@ console.log("=== Virasya Audio Storage, Limits & Playback Test Suite ===\n");
   // 5. Valid audio succeeds and records verified duration
   assert.strictEqual(simulateStorySealing({ storage_path: "user-123/story_recording.wav" }, mockStorage).sealed, true);
   console.log("   ✓ Sealing invariant upheld: unvalidated or missing audio recordings cannot reach preserved state.");
+
+  // --- Behavioral Test 17: OGG Stream Chaining & Monotonic Granule Handling ---
+  console.log("\nBehavioral Test 17: OGG chained page sequences and monotonic granule handling...");
+  function makeOggPage(serial, seq, granule, isBos, isEos, payload) {
+    const numSegments = Math.ceil(payload.length / 255) || 1;
+    const segTable = [];
+    let rem = payload.length;
+    for (let i = 0; i < numSegments; i++) {
+      const take = Math.min(255, rem);
+      segTable.push(take);
+      rem -= take;
+    }
+    const pageLen = 27 + segTable.length + payload.length;
+    const buf = new Uint8Array(pageLen);
+    const view = new DataView(buf.buffer);
+    buf.set([0x4f, 0x67, 0x67, 0x53], 0); // "OggS"
+    buf[4] = 0; // version
+    buf[5] = (isBos ? 2 : 0) | (isEos ? 4 : 0);
+    view.setUint32(6, granule & 0xffffffff, true);
+    view.setUint32(10, Math.floor(granule / (2 ** 32)), true);
+    view.setUint32(14, serial, true);
+    view.setUint32(18, seq, true);
+    view.setUint32(22, 0, true); // CRC placeholder
+    buf[26] = segTable.length;
+    buf.set(segTable, 27);
+    buf.set(payload, 27 + segTable.length);
+    return buf;
+  }
+
+  function makeOpusStream(serial, durationSec) {
+    const opusHead = new Uint8Array(19);
+    opusHead.set([0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64], 0); // "OpusHead"
+    opusHead[8] = 1;
+    opusHead[9] = 1;
+    new DataView(opusHead.buffer).setUint32(12, 48000, true);
+    const p0 = makeOggPage(serial, 0, 0, true, false, opusHead);
+
+    const granule = Math.round(durationSec * 48000);
+    const audioPayload = new Uint8Array(100);
+    const p1 = makeOggPage(serial, 1, granule, false, true, audioPayload);
+
+    const merged = new Uint8Array(p0.length + p1.length);
+    merged.set(p0, 0);
+    merged.set(p1, p0.length);
+    return merged;
+  }
+
+  // Single valid Opus stream (15s)
+  const singleOgg = makeOpusStream(101, 15.0);
+  const resSingleOgg = validateAudioBuffer(singleOgg, ".ogg");
+  assert.strictEqual(resSingleOgg.valid, true);
+  assert.strictEqual(resSingleOgg.format, "ogg");
+  assert.strictEqual(resSingleOgg.durationSeconds, 15.0);
+
+  // Two chained Opus streams (40s + 40s = 80s) -> Rejects as AUDIO_TOO_LONG
+  const chainPart1 = makeOpusStream(101, 40.0);
+  const chainPart2 = makeOpusStream(102, 40.0);
+  const chainedOversized = new Uint8Array(chainPart1.length + chainPart2.length);
+  chainedOversized.set(chainPart1, 0);
+  chainedOversized.set(chainPart2, chainPart1.length);
+  const resChainedOver = validateAudioBuffer(chainedOversized, ".ogg");
+  assert.strictEqual(resChainedOver.valid, false);
+  assert.strictEqual(resChainedOver.code, "AUDIO_TOO_LONG");
+  assert(resChainedOver.error.includes("80.0s"));
+
+  // Two chained Opus streams (20s + 25s = 45s) -> Passes under 60s
+  const chainOk1 = makeOpusStream(101, 20.0);
+  const chainOk2 = makeOpusStream(102, 25.0);
+  const chainedOk = new Uint8Array(chainOk1.length + chainOk2.length);
+  chainedOk.set(chainOk1, 0);
+  chainedOk.set(chainOk2, chainOk1.length);
+  const resChainedOk = validateAudioBuffer(chainedOk, ".ogg");
+  assert.strictEqual(resChainedOk.valid, true);
+  assert.strictEqual(resChainedOk.format, "ogg");
+  assert.strictEqual(resChainedOk.durationSeconds, 45.0);
+  console.log("   ✓ Ogg stream parsing correctly handles single and chained streams, accumulating cumulative duration.");
+
+  // --- Behavioral Test 18: FLAC STREAMINFO Header Bit-Level Parsing ---
+  console.log("\nBehavioral Test 18: FLAC STREAMINFO bit-unpacking and duration validation...");
+  function generateFlac(durationSeconds, sampleRate = 44100, bitsPerSample = 16, channels = 1) {
+    const totalSamples = Math.round(durationSeconds * sampleRate);
+    const buf = new Uint8Array(42 + 64);
+    const view = new DataView(buf.buffer);
+    buf.set([0x66, 0x4c, 0x61, 0x43], 0); // "fLaC"
+    buf[4] = 0x80; // Last metadata block, type 0 (STREAMINFO)
+    buf[5] = 0x00;
+    buf[6] = 0x00;
+    buf[7] = 0x22; // 34 bytes block length
+    view.setUint16(8, 4096, false);
+    view.setUint16(10, 4096, false);
+    buf[18] = (sampleRate >> 12) & 0xff;
+    buf[19] = (sampleRate >> 4) & 0xff;
+    buf[20] = ((sampleRate & 0x0f) << 4) | (((channels - 1) & 0x07) << 1) | (((bitsPerSample - 1) >> 4) & 0x01);
+    buf[21] = (((bitsPerSample - 1) & 0x0f) << 4) | (Math.floor(totalSamples / (2 ** 32)) & 0x0f);
+    view.setUint32(22, totalSamples >>> 0, false);
+    return buf;
+  }
+
+  // 1s FLAC at 44.1kHz
+  const resFlac1 = validateAudioBuffer(generateFlac(1.0, 44100, 16), ".flac");
+  assert.strictEqual(resFlac1.valid, true);
+  assert.strictEqual(resFlac1.format, "flac");
+  assert.strictEqual(resFlac1.durationSeconds, 1.0);
+
+  // 2s FLAC at 48kHz 24-bit
+  const resFlac2 = validateAudioBuffer(generateFlac(2.0, 48000, 24), ".flac");
+  assert.strictEqual(resFlac2.valid, true);
+  assert.strictEqual(resFlac2.format, "flac");
+  assert.strictEqual(resFlac2.durationSeconds, 2.0);
+
+  // Zero-sample FLAC -> AUDIO_DURATION_UNVERIFIABLE
+  const resFlacZero = validateAudioBuffer(generateFlac(0, 44100, 16), ".flac");
+  assert.strictEqual(resFlacZero.valid, false);
+  assert.strictEqual(resFlacZero.code, "AUDIO_DURATION_UNVERIFIABLE");
+
+  // Oversized FLAC (65s) -> AUDIO_TOO_LONG
+  const resFlacOver = validateAudioBuffer(generateFlac(65.0, 44100, 16), ".flac");
+  assert.strictEqual(resFlacOver.valid, false);
+  assert.strictEqual(resFlacOver.code, "AUDIO_TOO_LONG");
+  console.log("   ✓ FLAC STREAMINFO bit-unpacking verified for various sample rates, bit depths, and boundary conditions.");
+
+  // --- Behavioral Test 19: ADTS AAC Header Parsing & MP3 Disambiguation ---
+  console.log("\nBehavioral Test 19: ADTS AAC frame decoding & MPEG Layer III disambiguation...");
+  function generateAdtsAac(durationSeconds, sampleRate = 44100) {
+    const srIdx = 4; // 44100 Hz index
+    const frameCount = Math.max(2, Math.round((durationSeconds * sampleRate) / 1024));
+    const frameLen = 7 + 30; // 37 bytes per frame
+    const buf = new Uint8Array(frameCount * frameLen);
+    for (let f = 0; f < frameCount; f++) {
+      const off = f * frameLen;
+      buf[off] = 0xff;
+      buf[off + 1] = 0xf1; // MPEG-4, Layer 00, no CRC
+      buf[off + 2] = 0x50; // profile 1 (AAC-LC) + srIdx 4
+      buf[off + 3] = (frameLen >> 11) & 0x03;
+      buf[off + 4] = (frameLen >> 3) & 0xff;
+      buf[off + 5] = ((frameLen & 0x07) << 5) | 0x1f;
+      buf[off + 6] = 0xfc;
+    }
+    return buf;
+  }
+
+  // 2s ADTS AAC
+  const resAac2 = validateAudioBuffer(generateAdtsAac(2.0), ".aac");
+  assert.strictEqual(resAac2.valid, true);
+  assert.strictEqual(resAac2.format, "aac");
+  assert.strictEqual(resAac2.durationSeconds, 2.0);
+
+  // 65s ADTS AAC -> AUDIO_TOO_LONG
+  const resAacOver = validateAudioBuffer(generateAdtsAac(65.0), ".aac");
+  assert.strictEqual(resAacOver.valid, false);
+  assert.strictEqual(resAacOver.code, "AUDIO_TOO_LONG");
+
+  // Single truncated ADTS frame (< 2 frames) -> AUDIO_DURATION_UNVERIFIABLE
+  const singleAdtsFrame = generateAdtsAac(2.0).slice(0, 37);
+  const resAacTrunc = validateAudioBuffer(singleAdtsFrame, ".aac");
+  assert.strictEqual(resAacTrunc.valid, false);
+  assert.strictEqual(resAacTrunc.code, "AUDIO_DURATION_UNVERIFIABLE");
+  console.log("   ✓ ADTS AAC correctly identified as format 'aac' and differentiated from MPEG Layer III.");
+
+  // --- Behavioral Test 20: Cross-Check Against ffprobe Ground Truth ---
+  console.log("\nBehavioral Test 20: Ground truth comparison against ffprobe on synthetic audio...");
+  const tempAudioDir = fs.mkdtempSync(path.join(os.tmpdir(), "virasya-audio-groundtruth-"));
+  try {
+    const testMatrix = [
+      { ext: "wav", cmd: "-f lavfi -i sine=frequency=440:duration=2.5 -c:a pcm_s16le" },
+      { ext: "ogg", cmd: "-f lavfi -i sine=frequency=440:duration=3.0 -c:a libopus" },
+      { ext: "flac", cmd: "-f lavfi -i sine=frequency=440:duration=1.8 -c:a flac" },
+      { ext: "aac", cmd: "-f lavfi -i sine=frequency=440:duration=2.2 -c:a aac" },
+    ];
+    for (const item of testMatrix) {
+      const outPath = path.join(tempAudioDir, `sample.${item.ext}`);
+      cp.execSync(`ffmpeg -y ${item.cmd} "${outPath}"`, { stdio: "pipe" });
+      const probeOut = cp.execSync(
+        `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${outPath}"`
+      ).toString().trim();
+      const ffprobeDur = parseFloat(probeOut);
+      assert(!isNaN(ffprobeDur), `ffprobe failed to return duration for ${item.ext}`);
+
+      const fileBytes = fs.readFileSync(outPath);
+      const valRes = validateAudioBuffer(fileBytes, `.${item.ext}`);
+      assert.strictEqual(valRes.valid, true, `validateAudioBuffer failed on ffmpeg ${item.ext}`);
+      assert.strictEqual(valRes.format, item.ext, `Expected format ${item.ext}`);
+
+      const delta = Math.abs(valRes.durationSeconds - ffprobeDur);
+      assert(
+        delta <= 0.1,
+        `Duration discrepancy for ${item.ext} exceeds 0.1s tolerance (ffprobe: ${ffprobeDur}s, validator: ${valRes.durationSeconds}s, delta: ${delta}s)`
+      );
+      console.log(`     • ${item.ext.toUpperCase()}: ffprobe=${ffprobeDur}s, validator=${valRes.durationSeconds}s (delta=${delta.toFixed(4)}s <= 0.1s tolerance)`);
+    }
+  } finally {
+    fs.rmSync(tempAudioDir, { recursive: true, force: true });
+  }
+  console.log("   ✓ All ffmpeg generated formats match ffprobe duration within +/- 0.1s tolerance.");
+
+  // --- Behavioral Test 21: Real ffmpeg Chained Ogg (Opus & Vorbis) with Dual Ground Truth ---
+  console.log("\nBehavioral Test 21: Real ffmpeg chained Ogg with ffprobe & PCM decode ground truth...");
+  const tempChainedDir = fs.mkdtempSync(path.join(os.tmpdir(), "virasya-chained-groundtruth-"));
+  try {
+    // 1. Chained 40s + 40s = 80s Opus
+    const p1 = path.join(tempChainedDir, "p1.ogg");
+    const p2 = path.join(tempChainedDir, "p2.ogg");
+    const concatTxt = path.join(tempChainedDir, "concat_opus.txt");
+    const chained80 = path.join(tempChainedDir, "chained80.ogg");
+    const pcm80 = path.join(tempChainedDir, "out80.pcm");
+
+    cp.execSync(`ffmpeg -y -f lavfi -i sine=frequency=440:duration=40.0 -c:a libopus "${p1}"`, { stdio: "pipe" });
+    cp.execSync(`ffmpeg -y -f lavfi -i sine=frequency=880:duration=40.0 -c:a libopus "${p2}"`, { stdio: "pipe" });
+    fs.writeFileSync(concatTxt, `file '${p1.replace(/\\/g, "/")}'\nfile '${p2.replace(/\\/g, "/")}'\n`);
+    cp.execSync(`ffmpeg -y -f concat -safe 0 -i "${concatTxt}" -c copy "${chained80}"`, { stdio: "pipe" });
+
+    // PCM decode ground truth (16kHz mono s16le = 32000 B/s)
+    cp.execSync(`ffmpeg -y -i "${chained80}" -ar 16000 -ac 1 -f s16le "${pcm80}"`, { stdio: "pipe" });
+    const pcmDur = fs.readFileSync(pcm80).length / (16000 * 2);
+    assert(Math.abs(pcmDur - 80.0) <= 0.1, `PCM ground truth duration was ${pcmDur}s, expected ~80s`);
+
+    // Validator check: must reject 80s chained stream and not accept as 40s
+    const val80 = validateAudioBuffer(fs.readFileSync(chained80), ".ogg");
+    assert.strictEqual(val80.valid, false, "Chained 80s stream must be rejected");
+    assert.strictEqual(val80.code, "AUDIO_TOO_LONG");
+    assert(val80.error.includes("80.0s"), `Expected 80.0s in error message, got: ${val80.error}`);
+    console.log(`     • Chained 80s Opus: rejected as AUDIO_TOO_LONG (measured 80.0s, pcmGroundTruth=${pcmDur}s)`);
+
+    // 2. Chained 20s + 25s = 45s Opus
+    const o1 = path.join(tempChainedDir, "o1.ogg");
+    const o2 = path.join(tempChainedDir, "o2.ogg");
+    const concatO = path.join(tempChainedDir, "concat_o.txt");
+    const chained45 = path.join(tempChainedDir, "chained45.ogg");
+    cp.execSync(`ffmpeg -y -f lavfi -i sine=frequency=440:duration=20.0 -c:a libopus "${o1}"`, { stdio: "pipe" });
+    cp.execSync(`ffmpeg -y -f lavfi -i sine=frequency=880:duration=25.0 -c:a libopus "${o2}"`, { stdio: "pipe" });
+    fs.writeFileSync(concatO, `file '${o1.replace(/\\/g, "/")}'\nfile '${o2.replace(/\\/g, "/")}'\n`);
+    cp.execSync(`ffmpeg -y -f concat -safe 0 -i "${concatO}" -c copy "${chained45}"`, { stdio: "pipe" });
+    const val45 = validateAudioBuffer(fs.readFileSync(chained45), ".ogg");
+    assert.strictEqual(val45.valid, true, "Chained 45s stream must be accepted");
+    assert.strictEqual(val45.format, "ogg");
+    assert(Math.abs(val45.durationSeconds - 45.0) <= 0.2, `Expected ~45s, got ${val45.durationSeconds}s`);
+    console.log(`     • Chained 45s Opus: accepted (measured ${val45.durationSeconds}s)`);
+  } finally {
+    fs.rmSync(tempChainedDir, { recursive: true, force: true });
+  }
+  console.log("   ✓ Real ffmpeg chained Ogg streams correctly accumulated and evaluated against duration boundary.");
+
+  // --- Behavioral Test 22: Real ffmpeg Duration Boundaries (59.9s, 60.0s, 60.1s) across Formats ---
+  console.log("\nBehavioral Test 22: Duration boundaries (59.9s, 60.0s, 60.1s) across WAV, OGG, FLAC, AAC...");
+  const tempBoundDir = fs.mkdtempSync(path.join(os.tmpdir(), "virasya-boundary-test-"));
+  try {
+    const boundaryFormats = [
+      { ext: "wav", cmd: "-f lavfi -i sine=frequency=440:duration={dur} -ar 16000 -ac 1 -c:a pcm_s16le" },
+      { ext: "ogg", cmd: "-f lavfi -i sine=frequency=440:duration={dur} -c:a libopus" },
+      { ext: "flac", cmd: "-f lavfi -i sine=frequency=440:duration={dur} -ar 16000 -ac 1 -c:a flac" },
+      { ext: "aac", cmd: "-f lavfi -i sine=frequency=440:duration={dur} -c:a aac" },
+    ];
+
+    for (const fmt of boundaryFormats) {
+      for (const d of [59.9, 60.0, 60.1]) {
+        const fPath = path.join(tempBoundDir, `bound_${fmt.ext}_${d}.${fmt.ext}`);
+        const cmd = fmt.cmd.replace("{dur}", d.toFixed(1));
+        cp.execSync(`ffmpeg -y ${cmd} "${fPath}"`, { stdio: "pipe" });
+        const bytes = fs.readFileSync(fPath);
+        const res = validateAudioBuffer(bytes, `.${fmt.ext}`);
+
+        if (d <= MAX_AUDIO_DURATION_SECONDS) {
+          assert.strictEqual(res.valid, true, `Expected ${d}s ${fmt.ext} to be valid, got: ${JSON.stringify(res)}`);
+        } else {
+          assert.strictEqual(res.valid, false, `Expected ${d}s ${fmt.ext} to fail, got: ${JSON.stringify(res)}`);
+          assert.strictEqual(res.code, "AUDIO_TOO_LONG");
+        }
+      }
+      console.log(`     • Format ${fmt.ext.toUpperCase()}: 59.9s=PASS, 60.0s=PASS, 60.1s=REJECT (AUDIO_TOO_LONG)`);
+    }
+  } finally {
+    fs.rmSync(tempBoundDir, { recursive: true, force: true });
+  }
+  console.log("   ✓ Real ffmpeg audio files precisely obey the 60.0s duration ceiling across all containers.");
+
+  // --- Behavioral Test 23: Malformed Real Audio & Stream Integrity Rejection ---
+  console.log("\nBehavioral Test 23: Malformed, truncated, corrupted headers, and extension mismatch...");
+  const tempMalDir = fs.mkdtempSync(path.join(os.tmpdir(), "virasya-malformed-test-"));
+  try {
+    const realWavPath = path.join(tempMalDir, "sample_ok.wav");
+    cp.execSync(`ffmpeg -y -f lavfi -i sine=frequency=440:duration=2.0 -ar 16000 -ac 1 -c:a pcm_s16le "${realWavPath}"`, { stdio: "pipe" });
+    const realWavBytes = fs.readFileSync(realWavPath);
+
+    // 1. Truncated real WAV (cut 30% off end)
+    const truncated = realWavBytes.slice(0, Math.floor(realWavBytes.length * 0.7));
+    const resTrunc = validateAudioBuffer(truncated, ".wav");
+    assert.strictEqual(resTrunc.valid, false);
+    assert.strictEqual(resTrunc.code, "MALFORMED_AUDIO_HEADER");
+
+    // 2. Corrupted header bytes
+    const corrupt = Buffer.from(realWavBytes);
+    corrupt[0] = 0x00;
+    corrupt[1] = 0x00;
+    const resCorrupt = validateAudioBuffer(corrupt, ".wav");
+    assert.strictEqual(resCorrupt.valid, false);
+
+    // 3. Extension mismatch: authentic audio with prohibited extension
+    const resWrongExt = validateAudioBuffer(realWavBytes, ".txt");
+    assert.strictEqual(resWrongExt.valid, false);
+    assert.strictEqual(resWrongExt.code, "UNRECOGNIZED_CONTAINER");
+
+    // 4. Ogg stream with missing/-1 granule positions
+    const opusHead = new Uint8Array(19);
+    opusHead.set([0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64], 0);
+    opusHead[8] = 1; opusHead[9] = 1;
+    new DataView(opusHead.buffer).setUint32(12, 48000, true);
+    const missingGranuleBuf = new Uint8Array(27 + 1 + 19);
+    const viewMg = new DataView(missingGranuleBuf.buffer);
+    missingGranuleBuf.set([0x4f, 0x67, 0x67, 0x53], 0);
+    missingGranuleBuf[5] = 2; // BOS
+    viewMg.setUint32(6, 0xffffffff, true);
+    viewMg.setUint32(10, 0xffffffff, true);
+    viewMg.setUint32(14, 555, true);
+    viewMg.setUint32(18, 0, true);
+    missingGranuleBuf[26] = 1;
+    missingGranuleBuf[27] = 19;
+    missingGranuleBuf.set(opusHead, 28);
+    const resMissingGranule = validateAudioBuffer(missingGranuleBuf, ".ogg");
+    assert.strictEqual(resMissingGranule.valid, false);
+    assert.strictEqual(resMissingGranule.code, "AUDIO_DURATION_UNVERIFIABLE");
+
+    console.log("   ✓ All malformed audio invariants (truncated payload, zeroed headers, bad extensions, unindexed granules) fail closed.");
+  } finally {
+    fs.rmSync(tempMalDir, { recursive: true, force: true });
+  }
 
   console.log("\n==================================================================");
   console.log("ALL STATIC AND BEHAVIORAL SECURITY & AUDIT TESTS PASSED (100%)");

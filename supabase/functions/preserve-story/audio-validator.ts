@@ -20,9 +20,19 @@
 export const MAX_AUDIO_BYTES = 5 * 1024 * 1024; // 5 MiB = 5,242,880 bytes
 export const MAX_AUDIO_DURATION_SECONDS = 60.0;
 
+export const ALLOWED_AUDIO_EXTENSIONS = new Set([
+  ".wav",
+  ".ogg",
+  ".mp3",
+  ".m4a",
+  ".flac",
+  ".aac",
+  ".webm",
+]);
+
 export interface AudioValidationSuccess {
   valid: true;
-  format: "wav" | "ogg" | "mp3" | "flac" | "m4a" | "webm";
+  format: "wav" | "ogg" | "mp3" | "flac" | "m4a" | "webm" | "aac";
   durationSeconds: number;
   byteSize: number;
 }
@@ -67,6 +77,15 @@ export function validateAudioBuffer(buffer: Uint8Array, fileExtension = ""): Aud
     };
   }
 
+  if (fileExtension && !ALLOWED_AUDIO_EXTENSIONS.has(fileExtension.toLowerCase())) {
+    return {
+      valid: false,
+      code: "UNRECOGNIZED_CONTAINER",
+      error: `Unsupported audio file extension '${fileExtension}'. Permitted extensions: ${Array.from(ALLOWED_AUDIO_EXTENSIONS).join(", ")}.`,
+      byteSize,
+    };
+  }
+
   const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 
   // 1. WAV (RIFF WAVE / RF64)
@@ -104,7 +123,12 @@ export function validateAudioBuffer(buffer: Uint8Array, fileExtension = ""): Aud
     return parseM4a(buffer, view, byteSize);
   }
 
-  // 6. MP3 (ID3v2 or direct MPEG frame sync)
+  // 6. ADTS AAC
+  if (isAdtsSync(buffer, 0)) {
+    return parseAdts(buffer, view, byteSize);
+  }
+
+  // 7. MP3 (ID3v2 or direct MPEG frame sync)
   if (
     (byteSize >= 10 && readAscii(buffer, 0, 3) === "ID3") ||
     isMpegFrameSync(buffer, 0)
@@ -115,7 +139,7 @@ export function validateAudioBuffer(buffer: Uint8Array, fileExtension = ""): Aud
   return {
     valid: false,
     code: "UNRECOGNIZED_CONTAINER",
-    error: `Unsupported or invalid audio format. Permitted containers: WAV, OGG, MP3, M4A, FLAC, WebM. File extension was '${fileExtension}'.`,
+    error: `Unsupported or invalid audio format. Permitted containers: WAV, OGG, MP3, M4A, FLAC, WebM, AAC. File extension was '${fileExtension}'.`,
     byteSize,
   };
 }
@@ -254,11 +278,19 @@ function parseWav(buffer: Uint8Array, view: DataView, byteSize: number): AudioVa
 function parseOgg(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
   // Parse OGG pages sequentially from offset 0 to prevent spoofed trailing pages
   let offset = 0;
-  let targetSerial: number | null = null;
-  let sampleRate = 48000; // default for Opus
-  let maxGranule = -1;
-  let lastSeq = -1;
   let pageCount = 0;
+
+  interface OggLogicalStream {
+    codec: "opus" | "vorbis" | "unknown";
+    sampleRate: number;
+    preSkip: number;
+    lastSeq: number;
+    maxGranule: number;
+    hasGranule: boolean;
+    pageCount: number;
+  }
+
+  const streams = new Map<number, OggLogicalStream>();
 
   while (offset + 27 <= byteSize) {
     if (
@@ -309,56 +341,86 @@ function parseOgg(buffer: Uint8Array, view: DataView, byteSize: number): AudioVa
     }
 
     const pageDataOffset = offset + 27 + numSegments;
+    pageCount++;
 
-    // First page initialization
-    if (targetSerial === null) {
-      targetSerial = pageSerial;
+    let stream = streams.get(pageSerial);
+    if (!stream) {
+      let codec: "opus" | "vorbis" | "unknown" = "unknown";
+      let sampleRate = 0;
+      let preSkip = 0;
+
       if (pageDataLength >= 8) {
         const sig = readAscii(buffer, pageDataOffset, 8);
         if (sig.startsWith("OpusHead")) {
+          codec = "opus";
           sampleRate = 48000;
+          if (pageDataLength >= 12) {
+            preSkip = view.getUint16(pageDataOffset + 10, true);
+          }
         } else if (sig.startsWith("\x01vorbis")) {
+          codec = "vorbis";
           if (pageDataLength >= 16) {
             sampleRate = view.getUint32(pageDataOffset + 12, true);
           }
         }
       }
+
+      stream = {
+        codec,
+        sampleRate,
+        preSkip,
+        lastSeq: -1,
+        maxGranule: 0,
+        hasGranule: false,
+        pageCount: 0,
+      };
+      streams.set(pageSerial, stream);
+    } else if (stream.codec === "unknown" && pageDataLength >= 8) {
+      const sig = readAscii(buffer, pageDataOffset, 8);
+      if (sig.startsWith("OpusHead")) {
+        stream.codec = "opus";
+        stream.sampleRate = 48000;
+        if (pageDataLength >= 12) {
+          stream.preSkip = view.getUint16(pageDataOffset + 10, true);
+        }
+      } else if (sig.startsWith("\x01vorbis")) {
+        stream.codec = "vorbis";
+        if (pageDataLength >= 16) {
+          stream.sampleRate = view.getUint32(pageDataOffset + 12, true);
+        }
+      }
     }
 
-    // Process page for target audio stream
-    if (pageSerial === targetSerial) {
-      pageCount++;
-      if (lastSeq !== -1 && seqNum < lastSeq) {
-        return {
-          valid: false,
-          code: "MALFORMED_AUDIO_HEADER",
-          error: "Non-monotonic OGG page sequence number detected.",
-          byteSize,
-        };
-      }
-      lastSeq = seqNum;
+    stream.pageCount++;
 
-      if (lowGranule !== 0xffffffff || highGranule !== 0xffffffff) {
-        const granule = highGranule * 2 ** 32 + lowGranule;
-        if (granule > maxGranule) {
-          maxGranule = granule;
-          const currentDur = maxGranule / sampleRate;
-          if (currentDur > MAX_AUDIO_DURATION_SECONDS) {
-            return {
-              valid: false,
-              code: "AUDIO_TOO_LONG",
-              error: `Audio duration (${currentDur.toFixed(1)}s) exceeds the maximum limit of 60 seconds.`,
-              byteSize,
-            };
-          }
-        }
+    if (stream.lastSeq !== -1 && seqNum < stream.lastSeq) {
+      return {
+        valid: false,
+        code: "MALFORMED_AUDIO_HEADER",
+        error: `Non-monotonic OGG page sequence number detected in stream ${pageSerial}.`,
+        byteSize,
+      };
+    }
+    stream.lastSeq = seqNum;
+
+    // Granule position 0xffffffffffffffff indicates packet has not completed on this page
+    if (lowGranule !== 0xffffffff || highGranule !== 0xffffffff) {
+      const granule = highGranule * 2 ** 32 + lowGranule;
+      if (granule > stream.maxGranule) {
+        stream.maxGranule = granule;
+        stream.hasGranule = true;
       }
     }
 
     offset += pageTotalLength;
   }
 
-  if (maxGranule <= 0 || sampleRate <= 0 || pageCount === 0) {
+  // Filter for valid audio streams (Opus or Vorbis)
+  const audioStreams = Array.from(streams.values()).filter(
+    (s) => s.codec === "opus" || s.codec === "vorbis"
+  );
+
+  if (audioStreams.length === 0) {
     return {
       valid: false,
       code: "AUDIO_DURATION_UNVERIFIABLE",
@@ -367,8 +429,47 @@ function parseOgg(buffer: Uint8Array, view: DataView, byteSize: number): AudioVa
     };
   }
 
-  const duration = maxGranule / sampleRate;
-  return checkDuration(duration, "ogg", byteSize);
+  let totalDuration = 0;
+  for (const s of audioStreams) {
+    if (s.sampleRate <= 0 || !s.hasGranule || s.maxGranule <= 0) {
+      return {
+        valid: false,
+        code: "AUDIO_DURATION_UNVERIFIABLE",
+        error: "Unable to verify OGG stream duration from valid sequential pages.",
+        byteSize,
+      };
+    }
+
+    let streamDur = 0;
+    if (s.codec === "opus") {
+      const netSamples = Math.max(0, s.maxGranule - s.preSkip);
+      streamDur = netSamples / s.sampleRate;
+    } else {
+      streamDur = s.maxGranule / s.sampleRate;
+    }
+
+    if (streamDur <= 0) {
+      return {
+        valid: false,
+        code: "AUDIO_DURATION_UNVERIFIABLE",
+        error: "Unable to verify OGG stream duration from valid sequential pages.",
+        byteSize,
+      };
+    }
+
+    totalDuration += streamDur;
+  }
+
+  if (Math.round(totalDuration * 10) / 10 > MAX_AUDIO_DURATION_SECONDS) {
+    return {
+      valid: false,
+      code: "AUDIO_TOO_LONG",
+      error: `Audio duration (${totalDuration.toFixed(1)}s) exceeds the maximum limit of 60 seconds.`,
+      byteSize,
+    };
+  }
+
+  return checkDuration(totalDuration, "ogg", byteSize);
 }
 
 function parseMp3(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
@@ -463,7 +564,7 @@ function parseMp3(buffer: Uint8Array, view: DataView, byteSize: number): AudioVa
     totalSamples += samplesPerFrame;
 
     const accumulatedDuration = totalSamples / curSampleRate;
-    if (accumulatedDuration > MAX_AUDIO_DURATION_SECONDS) {
+    if (Math.round(accumulatedDuration * 10) / 10 > MAX_AUDIO_DURATION_SECONDS) {
       return {
         valid: false,
         code: "AUDIO_TOO_LONG",
@@ -846,23 +947,24 @@ function parseFlac(buffer: Uint8Array, view: DataView, byteSize: number): AudioV
   const b2 = buffer[20];
   const sampleRate = (b0 << 12) | (b1 << 4) | (b2 >> 4);
 
-  const b3 = buffer[21];
-  const b4 = buffer[22];
-  const b5 = buffer[23];
-  const b6 = buffer[24];
-  const b7 = buffer[25];
-
-  const top4Bits = b2 & 0x0f;
-  const totalSamples =
-    top4Bits * 2 ** 32 +
-    (b3 * 2 ** 24 + b4 * 2 ** 16 + b5 * 2 ** 8 + b6) +
-    b7 / 256;
+  // FLAC STREAMINFO bit-unpacking:
+  // sample rate (20 bits): buffer[18], buffer[19], buffer[20] >> 4
+  // channels (3 bits): (buffer[20] >> 1) & 0x07
+  // bits-per-sample (5 bits): ((buffer[20] & 0x01) << 4) | (buffer[21] >> 4)
+  // total samples (36 bits): buffer[21] & 0x0f (top 4 bits), followed by buffer[22..25] (32 bits)
+  const top4Bits = buffer[21] & 0x0f;
+  const lower32 =
+    buffer[22] * 2 ** 24 +
+    buffer[23] * 2 ** 16 +
+    buffer[24] * 2 ** 8 +
+    buffer[25];
+  const totalSamples = top4Bits * 2 ** 32 + lower32;
 
   if (sampleRate <= 0 || totalSamples <= 0) {
     return {
       valid: false,
       code: "AUDIO_DURATION_UNVERIFIABLE",
-      error: "FLAC header does not specify valid sample rate or sample count.",
+      error: "FLAC header does not specify valid sample rate or sample count (total samples must be non-zero).",
       byteSize,
     };
   }
@@ -882,13 +984,82 @@ function parseFlac(buffer: Uint8Array, view: DataView, byteSize: number): AudioV
   return checkDuration(duration, "flac", byteSize);
 }
 
+function parseAdts(buffer: Uint8Array, view: DataView, byteSize: number): AudioValidationResult {
+  const sampleRates = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+  let scanOffset = 0;
+  let totalValidFrames = 0;
+  let totalSamples = 0;
+  let primarySampleRate = 0;
+
+  while (scanOffset + 7 <= byteSize) {
+    if (!isAdtsSync(buffer, scanOffset)) {
+      scanOffset++;
+      continue;
+    }
+
+    const b1 = buffer[scanOffset + 1];
+    const b2 = buffer[scanOffset + 2];
+    const b3 = buffer[scanOffset + 3];
+    const b4 = buffer[scanOffset + 4];
+    const b5 = buffer[scanOffset + 5];
+    const b6 = buffer[scanOffset + 6];
+
+    const srIdx = (b2 >> 2) & 0x0f;
+    if (srIdx >= sampleRates.length) {
+      scanOffset++;
+      continue;
+    }
+    const curSampleRate = sampleRates[srIdx];
+
+    const frameLen = ((b3 & 0x03) << 11) | (b4 << 3) | ((b5 >> 5) & 0x07);
+    if (frameLen < 7 || scanOffset + frameLen > byteSize) {
+      scanOffset++;
+      continue;
+    }
+
+    const numRdb = b6 & 0x03;
+    const samplesInFrame = 1024 * (numRdb + 1);
+
+    if (primarySampleRate === 0) {
+      primarySampleRate = curSampleRate;
+    }
+
+    totalValidFrames++;
+    totalSamples += samplesInFrame;
+
+    const accumulatedDuration = totalSamples / curSampleRate;
+    if (Math.round(accumulatedDuration * 10) / 10 > MAX_AUDIO_DURATION_SECONDS) {
+      return {
+        valid: false,
+        code: "AUDIO_TOO_LONG",
+        error: `Audio duration (${accumulatedDuration.toFixed(1)}s) exceeds the maximum limit of 60 seconds.`,
+        byteSize,
+      };
+    }
+
+    scanOffset += frameLen;
+  }
+
+  if (totalValidFrames < 2 || primarySampleRate === 0) {
+    return {
+      valid: false,
+      code: "AUDIO_DURATION_UNVERIFIABLE",
+      error: "Unable to verify valid ADTS AAC frame sequence.",
+      byteSize,
+    };
+  }
+
+  const duration = totalSamples / primarySampleRate;
+  return checkDuration(duration, "aac", byteSize);
+}
+
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
 
 function checkDuration(
   duration: number,
-  format: "wav" | "ogg" | "mp3" | "flac" | "m4a" | "webm",
+  format: "wav" | "ogg" | "mp3" | "flac" | "m4a" | "webm" | "aac",
   byteSize: number
 ): AudioValidationResult {
   if (isNaN(duration) || duration <= 0) {
@@ -900,7 +1071,8 @@ function checkDuration(
     };
   }
 
-  if (duration > MAX_AUDIO_DURATION_SECONDS) {
+  // Enforce 60.0s limit with frame quantization boundary tolerance
+  if (Math.round(duration * 10) / 10 > MAX_AUDIO_DURATION_SECONDS) {
     return {
       valid: false,
       code: "AUDIO_TOO_LONG",
@@ -927,7 +1099,19 @@ function readAscii(buffer: Uint8Array, offset: number, length: number): string {
 
 function isMpegFrameSync(buffer: Uint8Array, offset: number): boolean {
   if (offset + 1 >= buffer.byteLength) return false;
-  return buffer[offset] === 0xff && (buffer[offset + 1] & 0xe0) === 0xe0;
+  // Byte 0 is 0xff, byte 1 bits 7-5 are 111 (sync), bits 2-1 are 01 (Layer III)
+  return (
+    buffer[offset] === 0xff &&
+    (buffer[offset + 1] & 0xe0) === 0xe0 &&
+    ((buffer[offset + 1] >> 1) & 0x03) === 1
+  );
+}
+
+function isAdtsSync(buffer: Uint8Array, offset: number): boolean {
+  if (offset + 1 >= buffer.byteLength) return false;
+  // Syncword: 12 bits 0xfff -> byte 0 is 0xff, byte 1 bits 7-4 are 1111 (0xf0)
+  // Layer bits (bits 2-1) are 00 for AAC ADTS
+  return buffer[offset] === 0xff && (buffer[offset + 1] & 0xf6) === 0xf0;
 }
 
 function readEbmlId(buffer: Uint8Array, offset: number): { id: number; len: number } {

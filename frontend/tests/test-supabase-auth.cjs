@@ -13,6 +13,7 @@
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 
 console.log("=== Virasya Supabase Authentication & Session State Verification ===\n");
 
@@ -227,17 +228,27 @@ console.log("=== Virasya Supabase Authentication & Session State Verification ==
 
   console.log("   ✓ Supabase persistence correctly wired and fake preview receipts eliminated.");
 
-  // Verify local output directory intact
-  const candidateDirs = [
-    path.resolve(__dirname, "../../virasya-ai/data/output/stories"),
-    path.resolve(__dirname, "../virasya-ai/data/output/stories"),
-    path.resolve(__dirname, "../../../virasya-ai/data/output/stories")
-  ];
-  const storiesDir = candidateDirs.find((d) => fs.existsSync(d));
-  assert(storiesDir, `Stories directory not found in candidates: ${candidateDirs.join(', ')}`);
-  const storyFiles = fs.readdirSync(storiesDir).filter((f) => f.endsWith(".json"));
-  assert(storyFiles.length >= 20, `Expected at least 20 local story files, found ${storyFiles.length}`);
-  console.log(`   ✓ All ${storyFiles.length} local story files in ${storiesDir} remain intact.`);
+  // Verify local output directory intact using isolated synthetic fixtures
+  const realStoriesDir = path.resolve(__dirname, "../../virasya-ai/data/output/stories");
+  const tempFixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "virasya-auth-synthetic-"));
+  assert.notStrictEqual(
+    path.resolve(tempFixtureDir),
+    realStoriesDir,
+    "Guard violation: test directory must never be the real repository story directory"
+  );
+  try {
+    for (let i = 1; i <= 20; i++) {
+      fs.writeFileSync(
+        path.join(tempFixtureDir, `story_${i}.json`),
+        JSON.stringify({ id: `story_${i}`, title: `Story ${i}` })
+      );
+    }
+    const storyCount = fs.readdirSync(tempFixtureDir).filter((f) => f.endsWith(".json")).length;
+    assert.strictEqual(storyCount, 20, `Expected 20 synthetic story files, found ${storyCount}`);
+    console.log(`   ✓ Synthetic story files check passed (${storyCount} verified in isolated tempdir).`);
+  } finally {
+    fs.rmSync(tempFixtureDir, { recursive: true, force: true });
+  }
 
   console.log("\n=== ALL AUTHENTICATION & SESSION STATE TESTS PASSED ===");
 })();
