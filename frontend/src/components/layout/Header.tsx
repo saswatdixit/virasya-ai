@@ -67,8 +67,8 @@ export default function Header({
           <a href="/culture-hosts" className="nav-link">
             Culture Hosts
           </a>
-          <a href="/private-vault" className="nav-link">
-            Private Vault
+          <a href="/heritage-vault" className="nav-link">
+            Heritage Vault
           </a>
           <a
             className="nav-icon-btn nav-search"
@@ -131,10 +131,10 @@ export default function Header({
           Culture Hosts
         </a>
         <a
-          href="/private-vault"
+          href="/heritage-vault"
           onClick={() => setMobileOpen(false)}
         >
-          Private Vault
+          Heritage Vault
         </a>
         <button
           type="button"

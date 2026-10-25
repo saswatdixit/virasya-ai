@@ -156,11 +156,11 @@ check(
 );
 
 check(
-  'MyArchivePage provides filter tabs for All, Private Vault, and Public Heritage',
+  'MyArchivePage provides filter tabs for All, Heritage Vault, and Public Heritage',
   myArchiveCode.includes('All Preserved') &&
-    myArchiveCode.includes('Private Vault') &&
+    myArchiveCode.includes('Heritage Vault') &&
     myArchiveCode.includes('Public Heritage'),
-  'MyArchivePage must provide tabs to view all, private, and public stories'
+  'MyArchivePage must provide tabs to view all, private (Heritage Vault), and public stories'
 );
 
 check(
@@ -181,11 +181,11 @@ check(
 );
 
 check(
-  'App.tsx routes /my-archive and /private-vault to MyArchivePage',
+  'App.tsx routes /my-archive and /heritage-vault to MyArchivePage',
   appCode.includes('import MyArchivePage from "../archive/MyArchivePage"') &&
-    appCode.includes('currentPath === "/my-archive" || currentPath === "/private-vault"') &&
+    appCode.includes('currentPath === "/heritage-vault"') &&
     appCode.includes('<MyArchivePage />'),
-  'App.tsx must route both /my-archive and /private-vault to MyArchivePage'
+  'App.tsx must route both /my-archive and /heritage-vault to MyArchivePage'
 );
 
 check(

@@ -51,16 +51,16 @@ check(
   'Search must be present in mobile menu drawer'
 );
 
-// 3. Check Culture Hosts and Private Vault clean labels
+// 3. Check Culture Hosts and Heritage Vault clean labels
 check(
   'Culture Hosts link has clean text with no badge in desktop header',
   header.includes('<a href="/culture-hosts" className="nav-link">\n            Culture Hosts\n          </a>'),
   'Culture Hosts link must not contain badges'
 );
 check(
-  'Private Vault link has clean text with no badge in desktop header',
-  header.includes('<a href="/private-vault" className="nav-link">\n            Private Vault\n          </a>'),
-  'Private Vault link must not contain badges'
+  'Heritage Vault link has clean text with no badge in desktop header',
+  header.includes('<a href="/heritage-vault" className="nav-link">\n            Heritage Vault\n          </a>'),
+  'Heritage Vault link must not contain badges'
 );
 
 // 4. Check CSS removes problematic absolute positioning that caused Search to hide behind Preserve CTA
@@ -95,8 +95,8 @@ check(
 // 6. Check Placeholder pages retain their Coming Soon status on the actual pages
 check(
   'Placeholder configs in App.tsx retain Coming Soon badges for pages',
-  app.includes('"/culture-hosts"') && app.includes('badge: "Coming Soon"') && app.includes('"/private-vault"'),
-  'Placeholder pages (/culture-hosts, /private-vault, /search) must keep their Coming Soon badges'
+  app.includes('"/culture-hosts"') && app.includes('badge: "Coming Soon"'),
+  'Placeholder pages (/culture-hosts, /search) must keep their Coming Soon badges'
 );
 
 console.log('\n======================================================');

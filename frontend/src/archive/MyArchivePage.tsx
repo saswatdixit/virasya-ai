@@ -3,7 +3,7 @@ import "./myArchive.css";
 import Header from "../components/layout/Header";
 import { useAuth } from "../auth";
 import { listStoriesFromBackend, type StoryPayload } from "../preserve/api";
-import { getStoryAudioPlaybackUrl, isSupabaseConfigured } from "../supabase";
+import { getStoryAudioPlaybackUrl, isSupabaseConfigured, processPendingAudioCleanups } from "../supabase";
 
 type ArchiveTab = "all" | "private" | "public";
 
@@ -14,6 +14,10 @@ export default function MyArchivePage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ArchiveTab>("all");
   const [selectedStory, setSelectedStory] = useState<StoryPayload | null>(null);
+
+  // Archival protection notice state & modal ref
+  const [storyToDelete, setStoryToDelete] = useState<StoryPayload | null>(null);
+  const deleteDialogRef = useRef<HTMLDialogElement>(null);
 
   // Playback state for Reader Modal
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
@@ -32,7 +36,11 @@ export default function MyArchivePage() {
     if (readerDialogRef.current && readerDialogRef.current.open) {
       readerDialogRef.current.close();
     }
+    if (deleteDialogRef.current && deleteDialogRef.current.open) {
+      deleteDialogRef.current.close();
+    }
     setSelectedStory(null);
+    setStoryToDelete(null);
     setPlaybackUrl(null);
     setAudioError(null);
     setResolvingAudio(false);
@@ -53,6 +61,9 @@ export default function MyArchivePage() {
 
     async function loadUserArchive() {
       try {
+        if (currentUserId) {
+          processPendingAudioCleanups(currentUserId).catch(() => {});
+        }
         const data = await listStoriesFromBackend();
         // Prevent race condition: ensure response belongs to current active user
         if (active && user?.id === currentUserId) {
@@ -136,6 +147,24 @@ export default function MyArchivePage() {
     setResolvingAudio(false);
   };
 
+  // Handle open archival protection notice dialog
+  const handleRequestDelete = (e: React.MouseEvent, story: StoryPayload) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setStoryToDelete(story);
+    if (deleteDialogRef.current && !deleteDialogRef.current.open) {
+      deleteDialogRef.current.showModal();
+    }
+  };
+
+  // Handle close archival protection notice dialog
+  const handleCloseDeleteDialog = () => {
+    if (deleteDialogRef.current && deleteDialogRef.current.open) {
+      deleteDialogRef.current.close();
+    }
+    setStoryToDelete(null);
+  };
+
   // Filter stories: My Archive exclusively displays preserved cultural records
   const preservedStories = stories.filter((s) => s.status === "preserved");
 
@@ -210,7 +239,7 @@ export default function MyArchivePage() {
               </div>
               <h2 className="archive-notice-title">Connect to Your Sovereign Archive</h2>
               <p className="archive-notice-desc">
-                Sign in with your email magic link to access your preserved oral histories, private vault recordings,
+                Sign in with your email magic link to access your preserved oral histories, heritage vault recordings,
                 and multi-device preservation drafts.
               </p>
               <div className="archive-notice-actions">
@@ -232,7 +261,7 @@ export default function MyArchivePage() {
                 </div>
                 <div className="archive-stat-card">
                   <span className="archive-stat-num">{privatePreserved.length}</span>
-                  <span className="archive-stat-label">Private Sovereign Vault</span>
+                  <span className="archive-stat-label">Heritage Vault</span>
                 </div>
                 <div className="archive-stat-card">
                   <span className="archive-stat-num">{publicPreserved.length}</span>
@@ -263,7 +292,7 @@ export default function MyArchivePage() {
                     className={`archive-tab-btn ${activeTab === "private" ? "is-active" : ""}`}
                     onClick={() => setActiveTab("private")}
                   >
-                    Private Vault ({privatePreserved.length})
+                    Heritage Vault ({privatePreserved.length})
                   </button>
                   <button
                     type="button"
@@ -310,14 +339,14 @@ export default function MyArchivePage() {
                   </div>
                   <h2 className="archive-notice-title">
                     {activeTab === "private"
-                      ? "No Private Stories in Vault"
+                      ? "No Stories in Heritage Vault"
                       : activeTab === "public"
                       ? "No Public Stories Preserved"
                       : "No Preserved Stories Yet"}
                   </h2>
                   <p className="archive-notice-desc">
                     {activeTab === "private"
-                      ? "Stories you preserve with 'Private (Only You)' visibility will be safely archived here in your sovereign vault."
+                      ? "Stories you preserve with 'Private (Only You)' visibility will be safely archived here in your Heritage Vault."
                       : activeTab === "public"
                       ? "Stories preserved with 'Public Heritage Archive' visibility will appear here and in the Explore catalog."
                       : "Capture and preserve cultural memories, folklore tales, and dialect narratives into your sovereign archive."}
@@ -359,6 +388,15 @@ export default function MyArchivePage() {
                             <span className="archive-pill prov">{provId}</span>
                             {story.audio && <span className="archive-pill audio">Master Audio</span>}
                           </div>
+                          <button
+                            type="button"
+                            className="archive-story-delete-btn"
+                            onClick={(e) => handleRequestDelete(e, story)}
+                            aria-label={`Archived story: ${story.title || "Untitled Story"} (preserved cultural asset)`}
+                            title={`Archived story: ${story.title || "Untitled Story"} (preserved cultural assets cannot be deleted by standard clients)`}
+                          >
+                            ×
+                          </button>
                         </div>
 
                         <h3 className="archive-story-title">{story.title || "Untitled Story"}</h3>
@@ -436,7 +474,7 @@ export default function MyArchivePage() {
               <div className="archive-badge-group" style={{ marginBottom: 8 }}>
                 {selectedStory.visibility === "private" ||
                 selectedStory.finalSettings?.visibility === "private" ? (
-                  <span className="archive-pill private">Private Sovereign Vault</span>
+                  <span className="archive-pill private">Heritage Vault (Private)</span>
                 ) : (
                   <span className="archive-pill public">Public Heritage Archive</span>
                 )}
@@ -544,6 +582,41 @@ export default function MyArchivePage() {
                   {selectedStory.preserved_at || selectedStory.created_at || "Immutable Record"}
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+      </dialog>
+
+      {/* Archival Protection Modal */}
+      <dialog
+        ref={deleteDialogRef}
+        className="archive-delete-dialog"
+        aria-labelledby="delete-dialog-title"
+        aria-describedby="delete-dialog-desc"
+        onCancel={handleCloseDeleteDialog}
+      >
+        {storyToDelete && (
+          <div className="archive-delete-dialog-in">
+            <h2 id="delete-dialog-title" className="archive-delete-dialog-title">
+              Archived Cultural Asset
+            </h2>
+            <p id="delete-dialog-desc" className="archive-delete-dialog-desc">
+              “{storyToDelete.title || "Untitled Story"}” is sealed and permanently preserved in the Sovereign Heritage Vault.
+            </p>
+
+            <div className="archive-preserved-notice">
+              <strong>Archival Protection:</strong> Preserved stories are archived cultural assets and cannot be deleted by standard clients. Once sealed with cryptographic provenance, oral histories cannot be permanently deleted by standard users to ensure the communal and historical record remains untampered. If you require archival review or retraction, please contact preservation administrators.
+            </div>
+
+            <div className="archive-delete-dialog-actions" style={{ justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="archive-tab-btn"
+                onClick={handleCloseDeleteDialog}
+                autoFocus
+              >
+                Understood
+              </button>
             </div>
           </div>
         )}

@@ -12,6 +12,10 @@
 
 import { getSupabase, isSupabaseConfigured } from "./client";
 import { storyRowToStoryPayload } from "./adapters";
+import {
+  attemptAudioCleanupWithRetry,
+  queuePendingAudioCleanup,
+} from "./storage";
 import type { StoryPayload, PreserveResponse, ExploreStoryCard, ExploreDetailStory } from "../preserve/api";
 
 /**
@@ -379,6 +383,159 @@ export async function deleteStoryDraftFromSupabase(
     return {
       success: false,
       error: err.message || "Network error while discarding cloud draft.",
+    };
+  }
+}
+
+export interface StoryDeletionResult {
+  success: boolean;
+  storageCleaned?: boolean;
+  warning?: string;
+  error?: string;
+  notFound?: boolean;
+}
+
+/**
+ * Permanently deletes a saved story (public or private) from Supabase public.stories
+ * with failure-safe audio storage cleanup.
+ *
+ * Failure-Safe Invariants:
+ * 1. Independent Server-Side Authentication & Ownership Verification:
+ *    Fetches record matching id and user_id = auth.uid(). Fails if not found or unauthorized.
+ * 2. Strict Path Sanitization:
+ *    Extracts storage_path strictly from the verified database record (never from caller parameters).
+ *    Asserts path starts with `${user.id}/` without directory traversal.
+ * 3. Database-First Atomic Deletion:
+ *    Deletes database row FIRST. If database deletion fails (trigger rejection, timeout, network error),
+ *    the audio file is NEVER touched, keeping the story and its recording 100% intact and uncorrupted.
+ * 4. Idempotent Storage Cleanup with Retry & Browser-Local Queue:
+ *    Once database deletion succeeds, attempts audio cleanup with exponential backoff retries.
+ *    If storage cleanup fails after retries, saves the path into browser localStorage for
+ *    subsequent retry on the same device and returns an honest warning rather than claiming false storage cleanup.
+ */
+export async function deleteStoryFromSupabase(
+  storyId: string
+): Promise<StoryDeletionResult> {
+  if (!storyId || typeof storyId !== "string" || !storyId.trim()) {
+    return { success: false, error: "Missing story identifier." };
+  }
+
+  const supabase = getSupabase();
+  if (!supabase || !isSupabaseConfigured()) {
+    return { success: false, error: "Archival database is not configured in this environment." };
+  }
+
+  try {
+    const {
+      data: { user },
+      error: authErr,
+    } = await supabase.auth.getUser();
+
+    if (authErr || !user) {
+      return { success: false, error: "Authentication required to permanently delete a story." };
+    }
+
+    // 1. Fetch story record to verify ownership and extract audio storage path
+    const { data: storyRow, error: fetchErr } = await (supabase as any)
+      .from("stories")
+      .select("id, user_id, audio, status, visibility")
+      .eq("id", storyId.trim())
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (fetchErr) {
+      console.error("[Supabase] Failed to verify story ownership before delete:", fetchErr);
+      return { success: false, error: fetchErr.message || "Failed to locate story in database." };
+    }
+
+    if (!storyRow) {
+      return {
+        success: false,
+        notFound: true,
+        error: "Story record could not be found or you do not have permission to delete it.",
+      };
+    }
+
+    // Invariant: Preserved stories are permanent cultural assets and cannot be deleted by standard clients
+    if (storyRow.status === "preserved") {
+      return {
+        success: false,
+        error: "Preserved stories are archived cultural assets and cannot be deleted by standard clients. Contact preservation administrators.",
+      };
+    }
+
+    // 2. Extract and validate audio storage path ONLY from the verified database row
+    let validatedStoragePath: string | null = null;
+    if (storyRow.audio && typeof storyRow.audio === "object") {
+      const rawPath = (storyRow.audio as any).storage_path;
+      if (typeof rawPath === "string" && rawPath.trim()) {
+        const cleanPath = rawPath.trim();
+        // Strict invariant: audio must be strictly namespaced to this user
+        if (
+          cleanPath.startsWith(`${user.id}/`) &&
+          !cleanPath.includes("..") &&
+          !cleanPath.includes("\\")
+        ) {
+          validatedStoragePath = cleanPath;
+        } else {
+          console.warn("[Supabase] Audio storage path failed namespace validation:", cleanPath);
+        }
+      }
+    }
+
+    // 3. Delete database record FIRST to maintain consistency if database deletion fails
+    const { data, error: deleteErr, count } = await (supabase as any)
+      .from("stories")
+      .delete({ count: "exact" })
+      .eq("id", storyId.trim())
+      .eq("user_id", user.id)
+      .select("id");
+
+    if (deleteErr) {
+      console.error("[Supabase] Failed to delete story record from database:", deleteErr);
+      // Consistent state: audio has not been touched, story remains preserved in database
+      return {
+        success: false,
+        error: deleteErr.message || "Failed to delete story from database.",
+      };
+    }
+
+    const deletedCount = count ?? (Array.isArray(data) ? data.length : 0);
+    if (deletedCount === 0) {
+      return {
+        success: false,
+        notFound: true,
+        error: "Story could not be deleted or does not exist in your archive.",
+      };
+    }
+
+    // 4. Now that database deletion is confirmed, clean up audio storage
+    if (!validatedStoragePath) {
+      // Story had no audio recording attached; deletion is complete
+      return { success: true, storageCleaned: true };
+    }
+
+    // Attempt audio cleanup with retry
+    const storageCleaned = await attemptAudioCleanupWithRetry(validatedStoragePath, 3);
+
+    if (storageCleaned) {
+      return { success: true, storageCleaned: true };
+    }
+
+    // If storage deletion failed after retries, enqueue into persistent cleanup queue
+    queuePendingAudioCleanup(user.id, validatedStoragePath);
+
+    return {
+      success: true,
+      storageCleaned: false,
+      warning:
+        "Story deleted, but audio cleanup could not be confirmed. A retry is saved in this browser and may run when you reopen the app on this device.",
+    };
+  } catch (err: any) {
+    console.error("[Supabase] Exception deleting story:", err);
+    return {
+      success: false,
+      error: err.message || "Network error while deleting story.",
     };
   }
 }

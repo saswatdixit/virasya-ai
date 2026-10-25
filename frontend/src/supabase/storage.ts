@@ -22,7 +22,71 @@ export interface AudioUploadResult {
 }
 
 /**
- * Uploads an audio file to the private user directory: {userId}/{fileName}
+ * Generates a collision-resistant, bounded, and sanitized storage path for an audio recording.
+ *
+ * Requirements:
+ * 1. Namespaced to authenticated user: {userId}/{uniqueFilename}
+ * 2. High-entropy v4 UUID ensures each upload receives a unique, unpredictable storage key.
+ * 3. Base filename is sanitized to [a-zA-Z0-9._-] and bounded to 40 characters.
+ * 4. Extension is sanitized and bounded to 10 characters (defaulting to .webm).
+ * 5. Total filename length is strictly bounded (<= 87 chars), total path <= 124 chars.
+ * 6. Never produces path traversal sequences (..), backslashes, or multiple separators.
+ */
+export function generateUniqueAudioStoragePath(userId: string, originalFileName: string): string {
+  const cleanUserId = (userId || "").trim();
+  if (!cleanUserId) {
+    throw new Error("Cannot generate storage path without a valid user ID.");
+  }
+
+  // Cryptographically secure RFC 4122 v4 UUID generator
+  let uniqueId: string;
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    uniqueId = crypto.randomUUID();
+  } else if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    // RFC 4122 v4: set 4 most significant bits of byte 6 to 0100 (version 4)
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    // RFC 4122 v4: set 2 most significant bits of byte 8 to 10 (variant 1)
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    uniqueId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  } else {
+    throw new Error(
+      "Secure randomness (crypto.randomUUID or crypto.getRandomValues) is unavailable in this environment."
+    );
+  }
+
+  const rawName = (originalFileName || "recording").trim();
+  // Strip any leading slashes or dots from raw input
+  const sanitizedRaw = rawName.replace(/^[./\\]+/, "");
+  const lastDot = sanitizedRaw.lastIndexOf(".");
+
+  const base = lastDot > 0 ? sanitizedRaw.slice(0, lastDot) : sanitizedRaw;
+  const ext = lastDot > 0 ? sanitizedRaw.slice(lastDot) : "";
+
+  // Sanitize base: alphanumeric, dots, hyphens, underscores only
+  let cleanBase = base.replace(/[^a-zA-Z0-9._-]/g, "_");
+  // Defend against consecutive dots / path traversal in base
+  cleanBase = cleanBase.replace(/\.{2,}/g, "_");
+  // Clamp base length to 40 characters; fallback to 'audio' if empty or purely dots
+  cleanBase = cleanBase.slice(0, 40).replace(/^\.+$/, "") || "audio";
+
+  // Sanitize extension: exactly one dot followed by alphanumeric characters (max 8)
+  let cleanExt = ext.startsWith(".") ? ext.slice(1) : ext;
+  cleanExt = cleanExt.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8);
+  if (cleanExt) {
+    cleanExt = `.${cleanExt}`;
+  } else {
+    cleanExt = ".webm";
+  }
+
+  const filename = `${uniqueId}_${cleanBase}${cleanExt}`;
+  return `${cleanUserId}/${filename}`;
+}
+
+/**
+ * Uploads an audio file to the private user directory: {userId}/{uniqueFilename}
  * Generates a short-lived signed URL for immediate playback in the browser.
  */
 export async function uploadAudioToPrivateBucket(
@@ -47,15 +111,14 @@ export async function uploadAudioToPrivateBucket(
     };
   }
 
-  // Sanitize filename to alphanumeric, dots, dashes, and underscores
-  const cleanName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const storagePath = `${userId}/${cleanName}`;
+  // Generate a cryptographically unique, bounded, and sanitized storage path
+  const storagePath = generateUniqueAudioStoragePath(userId, fileName);
 
   try {
     const { error: uploadError } = await supabase.storage
       .from(AUDIO_STORAGE_BUCKET)
       .upload(storagePath, file, {
-        upsert: true,
+        upsert: false, // Strictly forbid overwriting existing objects
         contentType: file.type || "audio/wav",
       });
 
@@ -135,6 +198,139 @@ export async function deleteAudioFromPrivateBucket(
   } catch {
     return false;
   }
+}
+
+/**
+ * Pending storage cleanups storage key prefix.
+ */
+export const PENDING_AUDIO_CLEANUP_KEY_PREFIX = "virasya_pending_audio_cleanups_";
+
+export interface PendingAudioCleanupItem {
+  storagePath: string;
+  enqueuedAt: string;
+  attempts: number;
+}
+
+/**
+ * Enqueues an audio storage path for retryable background cleanup.
+ * Strictly verifies path is non-empty, contains no directory traversal,
+ * and belongs to the specified user.
+ */
+export function queuePendingAudioCleanup(userId: string, storagePath: string): void {
+  if (!userId || !storagePath) return;
+  const cleanPath = storagePath.trim();
+  if (
+    !cleanPath.startsWith(`${userId}/`) ||
+    cleanPath.includes("..") ||
+    cleanPath.includes("\\")
+  ) {
+    return;
+  }
+
+  try {
+    const key = `${PENDING_AUDIO_CLEANUP_KEY_PREFIX}${userId}`;
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
+    const items: PendingAudioCleanupItem[] = raw ? JSON.parse(raw) : [];
+
+    // Avoid duplicate queue entries for the same path
+    if (!items.some((i) => i.storagePath === cleanPath)) {
+      items.push({
+        storagePath: cleanPath,
+        enqueuedAt: new Date().toISOString(),
+        attempts: 1,
+      });
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(key, JSON.stringify(items));
+      }
+    }
+  } catch (err) {
+    console.warn("[Storage] Failed to queue pending audio cleanup:", err);
+  }
+}
+
+/**
+ * Attempts to delete a storage audio file with exponential backoff retries.
+ */
+export async function attemptAudioCleanupWithRetry(
+  storagePath: string,
+  maxAttempts: number = 3
+): Promise<boolean> {
+  if (!storagePath) return false;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const success = await deleteAudioFromPrivateBucket(storagePath);
+    if (success) {
+      return true;
+    }
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 150));
+    }
+  }
+  return false;
+}
+
+/**
+ * Processes pending audio cleanup queue for the authenticated user.
+ * Idempotently removes items that are successfully deleted.
+ */
+export async function processPendingAudioCleanups(
+  userId: string
+): Promise<{ processed: number; succeeded: number; remaining: number }> {
+  if (!userId || typeof localStorage === "undefined") {
+    return { processed: 0, succeeded: 0, remaining: 0 };
+  }
+
+  const key = `${PENDING_AUDIO_CLEANUP_KEY_PREFIX}${userId}`;
+  let items: PendingAudioCleanupItem[] = [];
+
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return { processed: 0, succeeded: 0, remaining: 0 };
+    items = JSON.parse(raw);
+    if (!Array.isArray(items) || items.length === 0) {
+      return { processed: 0, succeeded: 0, remaining: 0 };
+    }
+  } catch {
+    return { processed: 0, succeeded: 0, remaining: 0 };
+  }
+
+  let succeeded = 0;
+  const remainingItems: PendingAudioCleanupItem[] = [];
+
+  for (const item of items) {
+    if (
+      !item.storagePath.startsWith(`${userId}/`) ||
+      item.storagePath.includes("..") ||
+      item.storagePath.includes("\\")
+    ) {
+      // Drop invalid or malicious paths
+      continue;
+    }
+
+    const success = await deleteAudioFromPrivateBucket(item.storagePath);
+    if (success) {
+      succeeded++;
+    } else {
+      item.attempts = (item.attempts || 1) + 1;
+      // Retain items with fewer than 5 attempts
+      if (item.attempts <= 5) {
+        remainingItems.push(item);
+      }
+    }
+  }
+
+  try {
+    if (remainingItems.length > 0) {
+      localStorage.setItem(key, JSON.stringify(remainingItems));
+    } else {
+      localStorage.removeItem(key);
+    }
+  } catch {}
+
+  return {
+    processed: items.length,
+    succeeded,
+    remaining: remainingItems.length,
+  };
 }
 
 /**

@@ -55,9 +55,9 @@ check(
 );
 
 check(
-  'Closing.tsx contains redirect link to /private-vault',
-  closing.includes('href="/private-vault"') && closing.includes('Private Vault'),
-  'Private Vault link must point to /private-vault'
+  'Closing.tsx contains redirect link to /heritage-vault',
+  closing.includes('href="/heritage-vault"') && closing.includes('Heritage Vault'),
+  'Heritage Vault link must point to /heritage-vault'
 );
 
 check(
@@ -70,7 +70,7 @@ check(
   'Closing.tsx provides explicit navigateTo handler for SPA redirects',
   closing.includes('navigateTo(e, "/explore")') &&
   closing.includes('navigateTo(e, "/culture-hosts")') &&
-  closing.includes('navigateTo(e, "/private-vault")'),
+  closing.includes('navigateTo(e, "/heritage-vault")'),
   'Closing.tsx must invoke navigateTo on click for instant SPA transition'
 );
 

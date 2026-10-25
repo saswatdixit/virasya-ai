@@ -72,11 +72,11 @@ export default function Closing() {
                 Culture Hosts
               </a>
               <a
-                href="/private-vault"
+                href="/heritage-vault"
                 className="footer-nav-link"
-                onClick={(e) => navigateTo(e, "/private-vault")}
+                onClick={(e) => navigateTo(e, "/heritage-vault")}
               >
-                Private Vault
+                Heritage Vault
               </a>
               <a href="#faq" className="footer-nav-link">
                 Good questions

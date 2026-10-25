@@ -51,7 +51,7 @@ export default function Faq() {
           <details>
             <summary>Can I keep my stories private?</summary>
             <p>
-              Yes. Virasya's Private Vault is envisioned as a space for
+              Yes. Virasya's Heritage Vault is envisioned as a space for
               preserving personal and family memories, with sharing controlled
               by you. You can keep stories for yourself or share them with the
               people you choose. Privacy and sharing controls will depend on the

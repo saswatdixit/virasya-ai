@@ -13,6 +13,7 @@ import {
   storyRowToStoryPayload,
   uploadAudioToPrivateBucket,
   deleteStoryDraftFromSupabase,
+  deleteStoryFromSupabase,
 } from "../supabase";
 
 export interface StoryPayload {
@@ -304,6 +305,15 @@ export async function deleteStoryDraftFromBackend(
   }
   // Local browser draft fallback for guest exploration
   return { success: true };
+}
+
+export async function deleteStoryFromBackend(
+  storyId: string
+): Promise<{ success: boolean; storageCleaned?: boolean; notFound?: boolean; error?: string; warning?: string }> {
+  if (isSupabaseConfigured()) {
+    return deleteStoryFromSupabase(storyId);
+  }
+  return { success: true, storageCleaned: true };
 }
 
 export async function getStoryFromBackend(storyId: string): Promise<StoryPayload> {

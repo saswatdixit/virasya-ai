@@ -39,12 +39,6 @@ const PLACEHOLDER_CONFIGS: Record<string, PlaceholderConfig> = {
     desc: "Coming soon — connect with native cultural custodians, storytellers, and community archives across India.",
     icon: <CulturalHostIcon size={38} />,
   },
-  "/private-vault": {
-    badge: "Coming Soon",
-    eyebrow: "Sovereign Archival Heritage",
-    title: "Private Sovereign Vault",
-    desc: "Coming soon — we’re working on a secure private space for your family recordings, restricted memories, and lineage archives.",
-  },
 };
 
 function PlaceholderPage({ path }: { path: string }) {
@@ -92,15 +86,34 @@ function PlaceholderPage({ path }: { path: string }) {
 }
 
 function AppContent() {
-  const [currentPath, setCurrentPath] = useState(() =>
-    window.location.pathname.replace(/\/+$/, "") || "/"
-  );
+  const [currentPath, setCurrentPath] = useState(() => {
+    const path = window.location.pathname.replace(/\/+$/, "") || "/";
+    if (path === "/private-vault") {
+      window.history.replaceState(
+        null,
+        "",
+        "/heritage-vault" + window.location.search + window.location.hash
+      );
+      return "/heritage-vault";
+    }
+    return path;
+  });
   const { openAuthModal, authModalOpen } = useAuth();
   const openedForRouteRef = useRef(false);
 
   useEffect(() => {
     const handleLocationChange = () => {
-      setCurrentPath(window.location.pathname.replace(/\/+$/, "") || "/");
+      const path = window.location.pathname.replace(/\/+$/, "") || "/";
+      if (path === "/private-vault") {
+        window.history.replaceState(
+          null,
+          "",
+          "/heritage-vault" + window.location.search + window.location.hash
+        );
+        setCurrentPath("/heritage-vault");
+      } else {
+        setCurrentPath(path);
+      }
     };
     window.addEventListener("popstate", handleLocationChange);
     return () => window.removeEventListener("popstate", handleLocationChange);
@@ -137,9 +150,12 @@ function AppContent() {
         const targetUrl = new URL(anchor.href, window.location.origin);
         if (targetUrl.origin === window.location.origin) {
           e.preventDefault();
-          const cleanPath = targetUrl.pathname.replace(/\/+$/, "") || "/";
+          let cleanPath = targetUrl.pathname.replace(/\/+$/, "") || "/";
+          if (cleanPath === "/private-vault") {
+            cleanPath = "/heritage-vault";
+          }
           if (cleanPath !== currentPath) {
-            window.history.pushState(null, "", targetUrl.pathname + targetUrl.search + targetUrl.hash);
+            window.history.pushState(null, "", cleanPath + targetUrl.search + targetUrl.hash);
             setCurrentPath(cleanPath);
             window.scrollTo({ top: 0, behavior: "instant" });
           } else if (targetUrl.hash) {
@@ -183,9 +199,24 @@ function AppContent() {
     }
   }, [authModalOpen]);
 
+  // Redirect legacy /private-vault to canonical /heritage-vault
+  useEffect(() => {
+    if (currentPath === "/private-vault") {
+      window.history.replaceState(
+        null,
+        "",
+        "/heritage-vault" + window.location.search + window.location.hash
+      );
+      setCurrentPath("/heritage-vault");
+    }
+  }, [currentPath]);
+
   const isPreserveRoute = currentPath.startsWith("/preserve-your-story");
   const isExploreRoute = currentPath === "/explore";
-  const isArchiveRoute = currentPath === "/my-archive" || currentPath === "/private-vault";
+  const isArchiveRoute =
+    currentPath === "/my-archive" ||
+    currentPath === "/heritage-vault" ||
+    currentPath === "/private-vault";
   const isPlaceholder = currentPath in PLACEHOLDER_CONFIGS;
 
   const isHomeRoute =

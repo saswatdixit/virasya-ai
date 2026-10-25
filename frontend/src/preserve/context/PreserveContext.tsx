@@ -597,7 +597,7 @@ export function PreserveProvider({ children }: { children: ReactNode }) {
         extractErrorMessage(unexpectedErr, "An unexpected error occurred during transcription. Please try again.")
       );
     }
-  }, [transcriptionPhase, isLanguageConfirmed, selectedLanguage, executeTranscription, goToStep]);
+  }, [transcriptionPhase, isLanguageConfirmed, selectedLanguage, executeTranscription, goToStep, user, openAuthModal]);
 
   const retryTranscription = useCallback(async () => {
     await startTranscription();
