@@ -182,6 +182,17 @@ def _provider_message(payload: Any, fallback: str) -> str:
             return error[:300]
         if isinstance(payload.get("message"), str):
             return payload["message"][:300]
+        detail = payload.get("detail")
+        if isinstance(detail, str):
+            return detail[:300]
+        if isinstance(detail, dict) and isinstance(detail.get("message"), str):
+            return detail["message"][:300]
+        if isinstance(detail, list):
+            parts = [
+                d.get("msg", str(d)) if isinstance(d, dict) else str(d)
+                for d in detail
+            ]
+            return ", ".join(parts)[:300]
     return fallback
 
 

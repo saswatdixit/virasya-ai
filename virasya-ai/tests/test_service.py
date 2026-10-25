@@ -235,6 +235,41 @@ def test_transport_errors_are_mapped(synthetic_wav, monkeypatch, request_error, 
         ).transcribe(synthetic_wav)
 
 
+def test_provider_detail_payload_is_extracted(synthetic_wav, monkeypatch):
+    monkeypatch.setenv("GNANI_API_KEY", "test-secret")
+    payloads = [
+        ({"detail": "Missing boundary in multipart."}, "Missing boundary in multipart."),
+        ({"detail": [{"msg": "Field required"}]}, "Field required"),
+        ({"detail": {"message": "Invalid key format"}}, "Invalid key format"),
+    ]
+    for payload, expected_snippet in payloads:
+        response = FakeResponse(status_code=400, payload=payload)
+        with pytest.raises(ProviderRequestError, match=expected_snippet):
+            GnaniTranscriptionService(session=FakeSession(response=response)).transcribe(
+                synthetic_wav
+            )
+        assert response.closed
+
+
+def test_provider_detail_payload_redacts_secrets(synthetic_wav, monkeypatch):
+    secret = "super-secret-key"
+    monkeypatch.setenv("GNANI_API_KEY", secret)
+    payloads = [
+        {"detail": f"Failed with {secret}"},
+        {"detail": [{"msg": f"Invalid token {secret}"}]},
+        {"detail": {"message": f"Secret leak {secret}"}},
+    ]
+    for payload in payloads:
+        response = FakeResponse(status_code=400, payload=payload)
+        with pytest.raises(ProviderRequestError) as exc_info:
+            GnaniTranscriptionService(session=FakeSession(response=response)).transcribe(
+                synthetic_wav
+            )
+        assert secret not in str(exc_info.value)
+        assert "[REDACTED]" in str(exc_info.value)
+        assert response.closed
+
+
 def test_audio_duration_limit_is_checked_before_upload(tmp_path, monkeypatch):
     import soundfile as sf
     import numpy as np

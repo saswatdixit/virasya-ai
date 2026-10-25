@@ -36,6 +36,11 @@ def transcribe_file(
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     parser = argparse.ArgumentParser(
         description="Transcribe Hindi audio with the documented Gnani Prisma service."
     )
