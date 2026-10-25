@@ -78,11 +78,7 @@ The application is structured as a production-grade React application featuring 
 │   ├── check-india-projection.cjs # Automated regression test for India map geometry
 │   └── capture-screenshots.cjs    # Automated CDP visual verification script
 ├── tools/
-    └── maps/                    # GIS generation scripts & raw source data
-        ├── convert-india-outline.py
-        ├── geoBoundaries-IND-ADM1.geojson
-        ├── geoBoundaries-IND-ADM1-simplified.geojson
-        └── README.md
+│   └── dev-runner.js            # Unified dev runner orchestrating Python & Vite
 ```
 
 ---
@@ -92,7 +88,7 @@ The application is structured as a production-grade React application featuring 
 | Script | Command | Description |
 |---|---|---|
 | `npm run dev` | `node tools/dev-runner.js` | **Unified start**: Concurrently launches Python AI backend (port 5000) and Vite frontend (port 5173) with health monitoring |
-| `npm run backend` | `virasya-ai/.venv/Scripts/python ...` | Starts only the local Python AI workbench service (port 5000) |
+| `npm run backend` | `cd ../virasya-ai && .venv\Scripts\python -m virasya_ai.web.server` | Starts only the local Python AI workbench service (port 5000) |
 | `npm run vite` | `vite` | Starts only the Vite frontend dev server (port 5173) |
 | `npm run build` | `tsc -b && vite build` | Type-checks and bundles production build |
 | `npm test` | `node tests/...` | Runs regression tests for map geometry and 6-step workflow definitions |

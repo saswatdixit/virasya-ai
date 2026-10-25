@@ -62,6 +62,10 @@ Virasya is a sovereign cultural preservation platform. It pairs high-fidelity In
 * Once status is set to `'preserved'`, core narrative content (`title`, `final_text`, `written_text`, `story`, `audio`, `vocabulary`) cannot be modified or demoted by standard users (`SQLSTATE 23514`).
 * Storytellers retain control over public access via mutable metadata toggles: `visibility` (`'public'` or `'private'`) and `audio_public_playback` (`true` or `false`).
 
+### 4.4 Local Transcript Persistence & Editorial Separation
+* For local Python workbench workflows, transcripts are persisted atomically to `data/output/transcriptions.json`.
+* Raw ASR output is strictly preserved alongside user-reviewed corrections, ensuring authentic phonetics remain uncorrupted by downstream formatting.
+
 ---
 
 ## 5. Non-Functional Requirements & Security Invariants
@@ -79,4 +83,4 @@ Virasya is a sovereign cultural preservation platform. It pairs high-fidelity In
 * **Python Backend:** All 73 pytest tests pass 100% with zero mock regressions.
 * **Frontend Build:** `tsc -b && vite build` compiles cleanly with 0 TypeScript or bundle errors.
 * **Database RLS:** Cross-tenant vocabulary insertion and preserved story tampering must return non-zero SQL errors (`42501` or `23514`).
-* **Zero Production Drift:** Migration files in `supabase/migrations/` and `frontend/supabase/migrations/` must maintain 100% SHA-256 parity.
+* **Zero Production Drift:** Migration files in `supabase/migrations/` maintain strict sequential integrity and security invariants.
