@@ -90,8 +90,77 @@ function normalizeLanguageCode(raw?: string): string {
   return SUPPORTED_LANGUAGE_CODES[clean] || "hi-IN";
 }
 
+/**
+ * Redacts tokens, URLs, secrets, and excessive whitespace from error strings.
+ */
+export function sanitizeLogString(raw: string, maxLen = 300): string {
+  if (!raw) return "";
+  let clean = String(raw)
+    .replace(/bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [REDACTED]")
+    .replace(/(api[-_]?key|key|token|secret)[=:\s]+[A-Za-z0-9_-]+/gi, "$1=[REDACTED]")
+    .replace(/https?:\/\/[^\s"'`<>]+/gi, "[URL]")
+    .replace(/[\r\n\t]+/g, " ")
+    .trim();
+  if (clean.length > maxLen) {
+    clean = clean.slice(0, maxLen) + "...";
+  }
+  return clean;
+}
+
+/**
+ * Extracts a sanitized, length-limited error message from provider responses,
+ * supporting FastAPI/Envoy nested structures (detail.message, detail.error_code, array details).
+ */
+export function extractSanitizedProviderError(rawText: string, errJson: any, maxLen = 300): string {
+  let rawMsg = "";
+  if (errJson && typeof errJson === "object") {
+    const detail = errJson.detail;
+    if (typeof detail === "string" && detail.trim()) {
+      rawMsg = detail.trim();
+    } else if (detail && typeof detail === "object") {
+      if (Array.isArray(detail)) {
+        rawMsg = detail
+          .map((item) =>
+            typeof item === "object" && item
+              ? item.msg || item.message || JSON.stringify(item)
+              : String(item)
+          )
+          .join(", ");
+      } else {
+        const dMsg = detail.message || detail.error || detail.msg;
+        const dCode = detail.error_code || detail.code;
+        if (dMsg && dCode) {
+          rawMsg = `[${dCode}] ${dMsg}`;
+        } else if (dMsg) {
+          rawMsg = String(dMsg);
+        } else if (dCode) {
+          rawMsg = `[${dCode}]`;
+        }
+      }
+    }
+
+    if (!rawMsg) {
+      if (typeof errJson.message === "string" && errJson.message.trim()) {
+        rawMsg = errJson.message.trim();
+      } else if (typeof errJson.error === "string" && errJson.error.trim()) {
+        rawMsg = errJson.error.trim();
+      }
+    }
+  }
+
+  if (!rawMsg && rawText) {
+    rawMsg = rawText.trim();
+  }
+
+  return sanitizeLogString(rawMsg, maxLen);
+}
+
 Deno.serve(async (req: Request) => {
   const corsHeaders = getCorsHeaders(req);
+  const requestId =
+    req.headers.get("x-request-id") ||
+    req.headers.get("sb-request-id") ||
+    crypto.randomUUID();
 
   // 1. Handle CORS Preflight
   if (req.method === "OPTIONS") {
@@ -297,7 +366,16 @@ Deno.serve(async (req: Request) => {
 
     // 8. Verify GNANI_API_KEY secret
     const gnaniApiKey = Deno.env.get("GNANI_API_KEY");
-    if (!gnaniApiKey) {
+    const hasGnaniKey = Boolean(gnaniApiKey && gnaniApiKey.trim().length > 0);
+    if (!hasGnaniKey || !gnaniApiKey) {
+      console.error(
+        JSON.stringify({
+          tag: "GNANI_CONFIG_ERROR",
+          requestId,
+          keyConfigured: false,
+          error: "Missing GNANI_API_KEY secret.",
+        })
+      );
       return new Response(
         JSON.stringify({
           error: "Speech-to-text service is not configured. Missing GNANI_API_KEY secret.",
@@ -326,6 +404,20 @@ Deno.serve(async (req: Request) => {
     const filePayload = new Blob([audioBuffer], { type: mimeType });
     formData.append("audio_file", filePayload, filename);
 
+    // Structured diagnostic log before dispatch (no secrets, no audio payload, no tokens)
+    console.log(
+      JSON.stringify({
+        tag: "GNANI_DISPATCH",
+        requestId,
+        keyConfigured: true,
+        targetLanguageCode,
+        requestedFormat,
+        audioFormat: validation.format,
+        audioByteLength: audioBuffer.byteLength,
+        audioDurationSeconds: validation.durationSeconds,
+      })
+    );
+
     // 9. Forward audio to Gnani with timeout guard
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), GNANI_TIMEOUT_MS);
@@ -343,7 +435,16 @@ Deno.serve(async (req: Request) => {
         signal: controller.signal,
       });
     } catch (networkErr: any) {
+      const durationMs = Math.round(performance.now() - t0);
       if (networkErr.name === "AbortError") {
+        console.error(
+          JSON.stringify({
+            tag: "GNANI_TIMEOUT",
+            requestId,
+            durationMs,
+            timeoutMs: GNANI_TIMEOUT_MS,
+          })
+        );
         return new Response(
           JSON.stringify({
             error: "Gnani transcription request timed out after 45 seconds.",
@@ -352,6 +453,15 @@ Deno.serve(async (req: Request) => {
           { status: 504, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
+      const safeNetworkErr = sanitizeLogString(networkErr?.message || "Network error", 200);
+      console.error(
+        JSON.stringify({
+          tag: "GNANI_NETWORK_ERROR",
+          requestId,
+          durationMs,
+          error: safeNetworkErr,
+        })
+      );
       return new Response(
         JSON.stringify({
           error: "Unable to reach Gnani speech-to-text provider.",
@@ -363,17 +473,35 @@ Deno.serve(async (req: Request) => {
       clearTimeout(timeoutId);
     }
 
+    const durationMs = Math.round(performance.now() - t0);
     const elapsedSeconds = Math.round((performance.now() - t0) / 10) / 100;
 
-    // 10. Parse and validate Gnani response
+    // 10. Parse and validate Gnani response (read body exactly once)
     if (!gnaniRes.ok) {
-      let providerErr = "";
+      let rawErrText = "";
+      let errJson: any = null;
       try {
-        const errJson = await gnaniRes.json();
-        providerErr = errJson.message || errJson.error || "";
+        rawErrText = await gnaniRes.text();
+        try {
+          errJson = JSON.parse(rawErrText);
+        } catch {
+          errJson = null;
+        }
       } catch {
-        providerErr = await gnaniRes.text().catch(() => "");
+        rawErrText = "";
       }
+
+      const providerErr = extractSanitizedProviderError(rawErrText, errJson);
+      console.error(
+        JSON.stringify({
+          tag: "GNANI_HTTP_ERROR",
+          requestId,
+          status: gnaniRes.status,
+          durationMs,
+          error: providerErr || `HTTP_${gnaniRes.status}`,
+        })
+      );
+
       return new Response(
         JSON.stringify({
           error: providerErr || `Gnani STT returned HTTP ${gnaniRes.status}`,
@@ -391,6 +519,14 @@ Deno.serve(async (req: Request) => {
     try {
       providerData = await gnaniRes.json();
     } catch {
+      console.error(
+        JSON.stringify({
+          tag: "GNANI_MALFORMED_JSON",
+          requestId,
+          status: gnaniRes.status,
+          durationMs,
+        })
+      );
       return new Response(
         JSON.stringify({
           error: "Invalid JSON response received from speech recognition provider.",
@@ -401,12 +537,35 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!providerData || providerData.success !== true) {
-      const msg = providerData?.message || providerData?.error || "Speech recognition did not succeed.";
+      const rejectedMsg =
+        extractSanitizedProviderError("", providerData) ||
+        "Speech recognition did not succeed.";
+      console.error(
+        JSON.stringify({
+          tag: "GNANI_REJECTED",
+          requestId,
+          status: gnaniRes.status,
+          durationMs,
+          error: rejectedMsg,
+        })
+      );
       return new Response(
-        JSON.stringify({ error: msg, code: "TRANSCRIPTION_FAILED" }),
+        JSON.stringify({ error: rejectedMsg, code: "TRANSCRIPTION_FAILED" }),
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // Structured success log without logging any personal transcript text
+    console.log(
+      JSON.stringify({
+        tag: "GNANI_SUCCESS",
+        requestId,
+        status: gnaniRes.status,
+        durationMs,
+        inferenceSeconds: elapsedSeconds,
+        audioDurationSeconds: validation.durationSeconds,
+      })
+    );
 
     // 11. Extract transcript text safely
     const transcriptText = String(
@@ -457,7 +616,13 @@ Deno.serve(async (req: Request) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err: any) {
-    console.error("Unhandled error in transcribe-audio Edge Function:", err?.message);
+    const safeInternalErr = sanitizeLogString(err?.message || "Internal error", 200);
+    console.error(
+      JSON.stringify({
+        tag: "INTERNAL_ERROR",
+        error: safeInternalErr,
+      })
+    );
     return new Response(
       JSON.stringify({
         error: "An unexpected server error occurred during audio transcription.",

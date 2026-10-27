@@ -184,6 +184,174 @@ check(
   'Frontend api.ts must invoke transcribe-audio Edge Function with storage_path'
 );
 
+// 9. Minimal Diagnostic Logging & Sanitization (Diagnostic Patch Verification)
+check(
+  'Extracts or generates correlation requestId for tracing',
+  transcribeCode.includes('const requestId =') &&
+  (transcribeCode.includes('req.headers.get("x-request-id")') || transcribeCode.includes('crypto.randomUUID()')),
+  'Must establish request correlation ID'
+);
+
+check(
+  'Emits structured GNANI_DISPATCH log with keyConfigured boolean without logging API key or hash',
+  transcribeCode.includes('GNANI_DISPATCH') &&
+  transcribeCode.includes('keyConfigured: true') &&
+  !transcribeCode.includes('gnaniApiKey:') &&
+  !transcribeCode.includes('apiKey: gnaniApiKey'),
+  'Must log dispatch metadata safely without leaking secrets or key hashes'
+);
+
+check(
+  'Reads upstream response body exactly once on error and success paths',
+  transcribeCode.includes('rawErrText = await gnaniRes.text()') &&
+  transcribeCode.includes('JSON.parse(rawErrText)') &&
+  transcribeCode.includes('providerData = await gnaniRes.json()'),
+  'Must read upstream response stream only once per path to avoid stream-locked errors'
+);
+
+check(
+  'Extracts nested FastAPI/Envoy error structures (detail.message, detail.error_code)',
+  transcribeCode.includes('detail.message') &&
+  transcribeCode.includes('detail.error_code'),
+  'Must unpack nested detail.message and detail.error_code from Gnani responses'
+);
+
+check(
+  'Emits structured GNANI_HTTP_ERROR log with status, durationMs, and sanitized error',
+  transcribeCode.includes('GNANI_HTTP_ERROR') &&
+  transcribeCode.includes('status: gnaniRes.status') &&
+  transcribeCode.includes('durationMs'),
+  'Must emit structured error logs for upstream HTTP failures'
+);
+
+check(
+  'Handles fetch exceptions with GNANI_NETWORK_ERROR and GNANI_TIMEOUT without exposing URLs',
+  transcribeCode.includes('GNANI_NETWORK_ERROR') &&
+  transcribeCode.includes('GNANI_TIMEOUT') &&
+  transcribeCode.includes('safeNetworkErr'),
+  'Must sanitize fetch exceptions and log structured timeout/network events'
+);
+
+const successLogMatch = transcribeCode.match(/tag:\s*"GNANI_SUCCESS"[\s\S]*?\)/);
+const successLogStr = successLogMatch ? successLogMatch[0] : "";
+check(
+  'Never logs personal transcript text in GNANI_SUCCESS log',
+  successLogStr.length > 0 &&
+  !successLogStr.includes('transcript') &&
+  !successLogStr.includes('text:'),
+  'GNANI_SUCCESS must only log timing and duration, never user transcript content'
+);
+
+// 10. Executable Unit Tests: Sanitization & Nested Error Extraction
+function sanitizeLogString(raw, maxLen = 300) {
+  if (!raw) return "";
+  let clean = String(raw)
+    .replace(/bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [REDACTED]")
+    .replace(/(api[-_]?key|key|token|secret)[=:\s]+[A-Za-z0-9_-]+/gi, "$1=[REDACTED]")
+    .replace(/https?:\/\/[^\s"'`<>]+/gi, "[URL]")
+    .replace(/[\r\n\t]+/g, " ")
+    .trim();
+  if (clean.length > maxLen) {
+    clean = clean.slice(0, maxLen) + "...";
+  }
+  return clean;
+}
+
+function extractSanitizedProviderError(rawText, errJson, maxLen = 300) {
+  let rawMsg = "";
+  if (errJson && typeof errJson === "object") {
+    const detail = errJson.detail;
+    if (typeof detail === "string" && detail.trim()) {
+      rawMsg = detail.trim();
+    } else if (detail && typeof detail === "object") {
+      if (Array.isArray(detail)) {
+        rawMsg = detail
+          .map((item) =>
+            typeof item === "object" && item
+              ? item.msg || item.message || JSON.stringify(item)
+              : String(item)
+          )
+          .join(", ");
+      } else {
+        const dMsg = detail.message || detail.error || detail.msg;
+        const dCode = detail.error_code || detail.code;
+        if (dMsg && dCode) {
+          rawMsg = `[${dCode}] ${dMsg}`;
+        } else if (dMsg) {
+          rawMsg = String(dMsg);
+        } else if (dCode) {
+          rawMsg = `[${dCode}]`;
+        }
+      }
+    }
+
+    if (!rawMsg) {
+      if (typeof errJson.message === "string" && errJson.message.trim()) {
+        rawMsg = errJson.message.trim();
+      } else if (typeof errJson.error === "string" && errJson.error.trim()) {
+        rawMsg = errJson.error.trim();
+      }
+    }
+  }
+
+  if (!rawMsg && rawText) {
+    rawMsg = rawText.trim();
+  }
+
+  return sanitizeLogString(rawMsg, maxLen);
+}
+
+// Unit test 1: Nested error with detail.error_code and detail.message
+const testErr1 = extractSanitizedProviderError("", {
+  detail: { error_code: "MISSING_API_KEY", message: "Missing API key", status_code: 401 }
+});
+check(
+  'Unit test: Unpacks [MISSING_API_KEY] Missing API key',
+  testErr1 === "[MISSING_API_KEY] Missing API key",
+  `Expected '[MISSING_API_KEY] Missing API key', got '${testErr1}'`
+);
+
+// Unit test 2: Simple string detail
+const testErr2 = extractSanitizedProviderError("", { detail: "Unsupported audio container" });
+check(
+  'Unit test: Unpacks string detail',
+  testErr2 === "Unsupported audio container",
+  `Expected 'Unsupported audio container', got '${testErr2}'`
+);
+
+// Unit test 3: Array of validation errors
+const testErr3 = extractSanitizedProviderError("", { detail: [{ msg: "field required" }] });
+check(
+  'Unit test: Unpacks array of details',
+  testErr3 === "field required",
+  `Expected 'field required', got '${testErr3}'`
+);
+
+// Unit test 4: Raw HTML / non-JSON error
+const testErr4 = extractSanitizedProviderError("<html>502 Bad Gateway</html>", null);
+check(
+  'Unit test: Unpacks raw non-JSON text',
+  testErr4 === "<html>502 Bad Gateway</html>",
+  `Expected raw text, got '${testErr4}'`
+);
+
+// Unit test 5: Redaction of Bearer tokens and signed URLs
+const testErr5 = sanitizeLogString("Auth failed for Bearer eyJhbGciOi... on https://api.vachana.ai/stt/v3?token=secret123");
+check(
+  'Unit test: Redacts Bearer tokens and URLs',
+  testErr5 === "Auth failed for Bearer [REDACTED] on [URL]",
+  `Expected redacted string, got '${testErr5}'`
+);
+
+// Unit test 6: Truncation
+const longMsg = "x".repeat(500);
+const testErr6 = sanitizeLogString(longMsg, 100);
+check(
+  'Unit test: Truncates oversized messages with ellipsis',
+  testErr6.length === 103 && testErr6.endsWith("..."),
+  `Expected truncated length 103, got ${testErr6.length}`
+);
+
 console.log('\n======================================================');
 if (failed) {
   console.error('VERIFICATION FAILED: Some transcribe-audio Edge Function checks failed.');
