@@ -22,7 +22,7 @@ export interface AudioItem {
   bucket?: string;
 }
 
-export type TranscriptionStyle = "verbatim" | "transcribe";
+export type TranscriptionStyle = "verbatim" | "transcribe" | "codemix" | "transliterate";
 
 export interface ModelTranscript {
   status: 'idle' | 'processing' | 'done' | 'error';

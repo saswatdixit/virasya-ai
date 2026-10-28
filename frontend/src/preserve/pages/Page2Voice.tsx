@@ -639,6 +639,94 @@ export default function Page2Voice() {
                             <span className="p-hl-amber">₹12,500</span> है
                           </div>
                         </div>
+
+                        {/* Code-mix Option Card */}
+                        <div
+                          role="radio"
+                          aria-checked={transcriptionStyle === "codemix"}
+                          tabIndex={0}
+                          className={`p-style-card ${transcriptionStyle === "codemix" ? "is-selected" : ""}`}
+                          onClick={() => setTranscriptionStyle("codemix")}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setTranscriptionStyle("codemix");
+                            }
+                          }}
+                        >
+                          <div className="p-style-card-header">
+                            <div className="p-style-radio-indicator">
+                              <input
+                                type="radio"
+                                id="style-codemix"
+                                name="transcription-style"
+                                value="codemix"
+                                checked={transcriptionStyle === "codemix"}
+                                onChange={() => setTranscriptionStyle("codemix")}
+                                tabIndex={-1}
+                                aria-hidden="true"
+                              />
+                              <strong className="p-style-title">Code-mix</strong>
+                            </div>
+                            {transcriptionStyle === "codemix" && (
+                              <span className="p-style-check" aria-hidden="true">✓</span>
+                            )}
+                          </div>
+
+                          <p className="p-style-desc">
+                            Keeps English words in Latin script and Indic-language words in their native scripts. Numbers are generally written as words.
+                          </p>
+
+                          <div className="p-style-example" aria-label="Code-mix style example: Mera account balance baarah hazaar paanch sau rupaye hai with English words in Latin script and Hindi in Devanagari">
+                            <span className="p-style-eg">e.g.</span> मेरा{" "}
+                            <span className="p-hl-blue">account balance</span>{" "}
+                            <span className="p-hl-amber">बारह हज़ार पाँच सौ रुपये</span> है
+                          </div>
+                        </div>
+
+                        {/* Transliterate Option Card */}
+                        <div
+                          role="radio"
+                          aria-checked={transcriptionStyle === "transliterate"}
+                          tabIndex={0}
+                          className={`p-style-card ${transcriptionStyle === "transliterate" ? "is-selected" : ""}`}
+                          onClick={() => setTranscriptionStyle("transliterate")}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setTranscriptionStyle("transliterate");
+                            }
+                          }}
+                        >
+                          <div className="p-style-card-header">
+                            <div className="p-style-radio-indicator">
+                              <input
+                                type="radio"
+                                id="style-transliterate"
+                                name="transcription-style"
+                                value="transliterate"
+                                checked={transcriptionStyle === "transliterate"}
+                                onChange={() => setTranscriptionStyle("transliterate")}
+                                tabIndex={-1}
+                                aria-hidden="true"
+                              />
+                              <strong className="p-style-title">Transliterate</strong>
+                            </div>
+                            {transcriptionStyle === "transliterate" && (
+                              <span className="p-style-check" aria-hidden="true">✓</span>
+                            )}
+                          </div>
+
+                          <p className="p-style-desc">
+                            Writes the transcript in Latin letters, similar to romanized Hindi/Hinglish. Numbers are written as words.
+                          </p>
+
+                          <div className="p-style-example" aria-label="Transliterate style example: Mera account balance baarah hazaar paanch sau rupaye hai entirely in Latin script">
+                            <span className="p-style-eg">e.g.</span> Mera{" "}
+                            <span className="p-hl-blue">account balance</span>{" "}
+                            <span className="p-hl-amber">baarah hazaar paanch sau rupaye</span> hai
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -945,7 +1033,13 @@ export default function Page2Voice() {
             <div className="p-side-item">
               <span className="p-side-label">Output Style</span>
               <span className="p-side-val" style={{ textTransform: "capitalize" }}>
-                {transcriptionStyle === "transcribe" ? "Transcribe (Digits & Symbols)" : "Verbatim (Native Script)"}
+                {transcriptionStyle === "transcribe"
+                  ? "Transcribe (Digits & Symbols)"
+                  : transcriptionStyle === "codemix"
+                  ? "Code-mix (Mixed Script)"
+                  : transcriptionStyle === "transliterate"
+                  ? "Transliterate (Latin Script)"
+                  : "Verbatim (Native Script)"}
               </span>
             </div>
 

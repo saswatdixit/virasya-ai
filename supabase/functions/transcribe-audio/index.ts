@@ -22,6 +22,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { validateAudioBuffer } from "../preserve-story/audio-validator.ts";
+import { transliterateDevanagariToLatin } from "./transliterate.ts";
 
 const STORAGE_BUCKET = "story-recordings-private";
 const GNANI_STT_ENDPOINT = "https://api.vachana.ai/stt/v3";
@@ -385,13 +386,44 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 8. Build native FormData for Gnani Prisma STT v2.5
+    // 8. Build native FormData for Gnani Prisma STT
     const targetLanguageCode = normalizeLanguageCode(body.language_code || body.language);
-    const requestedFormat = (body.format || body.transcription_style || body.transcriptionStyle)?.toLowerCase() === "transcribe"
-      ? "transcribe"
-      : "verbatim";
+    const rawFormat = (body.format || body.transcription_style || body.transcriptionStyle)?.toString().toLowerCase().trim();
+
+    let requestedFormat: "verbatim" | "transcribe" | "codemix" | "transliterate" = "verbatim";
+    let isPrismaV3 = false;
+
+    if (rawFormat) {
+      if (rawFormat === "transcribe") {
+        requestedFormat = "transcribe";
+      } else if (rawFormat === "codemix" || rawFormat === "code-mix") {
+        requestedFormat = "codemix";
+        isPrismaV3 = true;
+      } else if (rawFormat === "transliterate") {
+        requestedFormat = "transliterate";
+        isPrismaV3 = true;
+      } else if (rawFormat === "verbatim") {
+        requestedFormat = "verbatim";
+      } else {
+        return new Response(
+          JSON.stringify({
+            error: `Invalid transcription style: '${rawFormat}'. Supported styles are 'verbatim', 'transcribe', 'codemix', and 'transliterate'.`,
+            code: "INVALID_TRANSCRIPTION_STYLE",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     const formData = new FormData();
-    formData.append("language_code", targetLanguageCode);
+    if (isPrismaV3) {
+      formData.append("model", "prisma-v3.0");
+    }
+    // For transliterate, language_code is optional; Gnani auto-identifies if omitted
+    const shouldOmitLanguageCode = requestedFormat === "transliterate" && !body.language_code && !body.language;
+    if (!shouldOmitLanguageCode) {
+      formData.append("language_code", targetLanguageCode);
+    }
     formData.append("format", requestedFormat);
 
     let mimeType = "audio/wav";
@@ -410,8 +442,9 @@ Deno.serve(async (req: Request) => {
         tag: "GNANI_DISPATCH",
         requestId,
         keyConfigured: true,
-        targetLanguageCode,
+        targetLanguageCode: shouldOmitLanguageCode ? null : targetLanguageCode,
         requestedFormat,
+        model: isPrismaV3 ? "prisma-v3.0" : "gnani-prisma-v2.5",
         audioFormat: validation.format,
         audioByteLength: audioBuffer.byteLength,
         audioDurationSeconds: validation.durationSeconds,
@@ -568,32 +601,63 @@ Deno.serve(async (req: Request) => {
     );
 
     // 11. Extract transcript text safely
-    const transcriptText = String(
-      providerData.result?.transcript ||
-        providerData.transcript ||
-        providerData.text ||
-        ""
-    ).trim();
+    let transcriptText = "";
+    if (requestedFormat === "transliterate") {
+      // Prefer native provider transliterated field if present and Romanized
+      const nativeTransliterated = String(
+        providerData.transliterated_transcript ||
+          providerData.transliteration ||
+          providerData.transliterated_text ||
+          providerData.result?.transliterated_transcript ||
+          providerData.result?.transliteration ||
+          providerData.result?.transliterated_text ||
+          ""
+      ).trim();
+
+      if (nativeTransliterated && !/[\u0900-\u097F]/.test(nativeTransliterated)) {
+        transcriptText = nativeTransliterated;
+      } else {
+        const rawTranscript = String(
+          providerData.result?.transcript ||
+            providerData.transcript ||
+            providerData.text ||
+            ""
+        ).trim();
+        transcriptText = transliterateDevanagariToLatin(rawTranscript);
+      }
+    } else {
+      transcriptText = String(
+        providerData.result?.transcript ||
+          providerData.transcript ||
+          providerData.text ||
+          ""
+      ).trim();
+    }
 
     // 12. Structure response matching TranscribeResponse expected by Virasya frontend
+    const providerName = isPrismaV3 ? "gnani-prisma-v3.0" : "gnani-prisma-v2.5";
+    const modelName = isPrismaV3 ? "Gnani Prisma STT v3.0" : "Gnani Prisma STT v2.5";
+
     const modelTranscriptItem = {
       status: "done",
       text: transcriptText,
-      model: "Gnani Prisma STT v2.5",
-      provider: "gnani-prisma-v2.5",
+      model: modelName,
+      provider: providerName,
       inference_seconds: elapsedSeconds,
       duration_seconds: validation.durationSeconds,
       error: null,
     };
 
     const requestedLangName = body.language || (targetLanguageCode.startsWith("hi") ? "Hindi" : targetLanguageCode);
+    const detectedLangCode = providerData.detected_language_code || providerData.language_code;
+    const resolvedLanguageCode = detectedLangCode || targetLanguageCode || "hi-IN";
 
     return new Response(
       JSON.stringify({
         status: "success",
         filename,
-        provider: "gnani-prisma-v2.5",
-        model: "Gnani Prisma STT v2.5",
+        provider: providerName,
+        model: modelName,
         format: requestedFormat,
         transcription_style: requestedFormat,
         transcript: transcriptText,
@@ -601,9 +665,10 @@ Deno.serve(async (req: Request) => {
         inference_seconds: elapsedSeconds,
         duration_seconds: validation.durationSeconds,
         language: requestedLangName,
-        language_code: targetLanguageCode,
+        language_code: resolvedLanguageCode,
         requested_language: requestedLangName,
-        provider_language: targetLanguageCode,
+        provider_language: resolvedLanguageCode,
+        ...(providerData.detected_language_code ? { detected_language_code: providerData.detected_language_code } : {}),
         results: {
           gnani: modelTranscriptItem,
           vaani: modelTranscriptItem,

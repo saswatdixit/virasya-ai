@@ -15,6 +15,8 @@ import {
   deleteStoryDraftFromSupabase,
   deleteStoryFromSupabase,
 } from "../supabase";
+import type { TranscriptionStyle } from "./types";
+import { transliterateDevanagariToLatin } from "./transliterate";
 
 export interface StoryPayload {
   id?: string;
@@ -43,7 +45,7 @@ export interface StoryPayload {
     bucket?: string;
   } | null;
   audio_public_playback?: boolean;
-  transcription_style?: "verbatim" | "transcribe";
+  transcription_style?: TranscriptionStyle;
   raw_transcripts?: Record<string, any>;
   workingDraft?: string;
   vocabulary?: Array<{
@@ -613,7 +615,7 @@ export async function transcribeAudioOnBackend(
   storyId?: string,
   signal?: AbortSignal,
   storagePath?: string,
-  format: "verbatim" | "transcribe" = "verbatim"
+  format: TranscriptionStyle = "verbatim"
 ): Promise<TranscribeResponse> {
   const supabase = getSupabase();
   if (supabase && isSupabaseConfigured()) {
@@ -645,6 +647,20 @@ export async function transcribeAudioOnBackend(
     if (!data || data.status !== "success") {
       const msg = extractErrorMessage((data as any)?.error, "Speech transcription failed.");
       throw new Error(msg);
+    }
+
+    if (format === "transliterate" && data) {
+      if (data.transcript && /[\u0900-\u097F]/.test(data.transcript)) {
+        const latin = transliterateDevanagariToLatin(data.transcript);
+        data.transcript = latin;
+        data.raw_text = latin;
+        if (data.gnani) data.gnani = latin;
+        if (data.vaani) data.vaani = latin;
+        if (data.results?.gnani) data.results.gnani.text = latin;
+        if (data.results?.vaani) data.results.vaani.text = latin;
+        if (data.gnani_info) data.gnani_info.text = latin;
+        if (data.vaani_info) data.vaani_info.text = latin;
+      }
     }
 
     return data;
@@ -685,7 +701,21 @@ export async function transcribeAudioOnBackend(
       if (errorData.error) throw new Error(errorData.error);
       throw new Error(`Transcription failed with status ${res.status}`);
     }
-    return res.json();
+    const localData = await res.json();
+    if (format === "transliterate" && localData) {
+      if (localData.transcript && /[\u0900-\u097F]/.test(localData.transcript)) {
+        const latin = transliterateDevanagariToLatin(localData.transcript);
+        localData.transcript = latin;
+        localData.raw_text = latin;
+        if (localData.gnani) localData.gnani = latin;
+        if (localData.vaani) localData.vaani = latin;
+        if (localData.results?.gnani) localData.results.gnani.text = latin;
+        if (localData.results?.vaani) localData.results.vaani.text = latin;
+        if (localData.gnani_info) localData.gnani_info.text = latin;
+        if (localData.vaani_info) localData.vaani_info.text = latin;
+      }
+    }
+    return localData;
   }
 
   throw new Error("Supabase connection is not configured in this environment.");
